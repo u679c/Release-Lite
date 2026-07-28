@@ -86,9 +86,11 @@
           <section class="page-view" id="detail-page">
             <section class="content-card detail-page-card"><div id="details"></div></section>
           </section>
-        </main>
-      </div>
+      </main>
     </div>
-    <script src="/static/app.js"></script>
+  </div>
+  <dialog id="directoryDialog" class="directory-dialog"><section><header><h2>选择服务器目录</h2><button aria-label="关闭" onclick="$('#directoryDialog').close()">×</button></header><div id="directoryPicker"></div></section></dialog>
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
   </body>
 </html>

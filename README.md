@@ -9,6 +9,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export RELEASE_LITE_SECRET='请替换为随机长字符串'
+export RELEASE_LITE_BROWSE_ROOTS='/srv/apps:/opt/projects'
 python app.py
 ```
 
@@ -20,6 +21,12 @@ python app.py
 2. 若项目有脚本，可从项目根目录发现的 `.sh`、`.py`、`package.json` scripts 中选择，也可以直接写命令。命令均在项目根目录执行。
 3. 填写部署前/后钩子以及环境变量（`KEY=value`，每行一个）。
 4. 保存后可启动、停止、重启、部署或回退到历史发布版本。
+
+## Python 运行环境
+
+目前运行环境仅支持 Python。可在项目配置中填写 Python 命令、虚拟环境目录（默认 `.venv`）和 pip 依赖文件（默认 `requirements.txt`）。执行「更新代码」时，系统会在虚拟环境不存在时自动创建它；勾选自动安装依赖后，会执行 `pip install -r requirements.txt`。项目启动时会优先使用该虚拟环境。
+
+项目目录选择器只允许浏览 `RELEASE_LITE_BROWSE_ROOTS` 指定的目录。多个根目录使用系统路径分隔符（Linux/macOS 为 `:`）连接；未设置时默认允许 `/srv`、`/opt`、`/var/www` 和当前用户家目录。
 
 ## Webhook 自动部署
 

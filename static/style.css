@@ -612,15 +612,38 @@ a {
 .detail-panel { display: none; }
 .detail-panel.active { display: block; }
 .detail-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 24px; margin-bottom: 30px; }
-.runtime-actions { display: flex; gap: 8px; justify-content: flex-end; margin: 0 0 20px; }
+.runtime-actions { display: flex; align-items: center; justify-content: space-between; margin: 0 0 20px; }
+.runtime-actions-left { display: flex; gap: 8px; }
 .detail-overview div { display: flex; flex-direction: column; gap: 6px; }
 .detail-overview small { color: var(--muted); }
 .detail-overview b { font-size: 13px; word-break: break-word; }
+.service-addresses { grid-column: 1 / -1; }
+.access-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 5px; }
+.access-links a { font-size: 12px; font-weight: 500; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px !important; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .config-form { max-width: 900px; }
 .check-row { display: flex; gap: 28px; margin: 16px 0; }
 .non-git-mode { margin: 0 0 16px; }
+.runtime-config { margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fafbfc; }
+.runtime-config h3 { margin: 0 0 14px; font-size: 14px; }
+.runtime-config .check { margin: 14px 0 0; }
+.directory-browse-button { margin: -4px 0 14px; }
+#directoryPicker { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fafbfc; }
+.directory-picker-title { font-weight: 600; margin-bottom: 10px; }
+.directory-roots, .directory-nav-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.directory-root, .directory-nav { padding: 5px 8px; font-size: 12px; }
+.directory-picker-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.directory-picker-head code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.directory-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 5px; margin-top: 10px; max-height: 220px; overflow: auto; }
+.directory-item { border: 0; background: transparent; text-align: left; padding: 6px; color: #344054; font-weight: 400; }
+.directory-item:hover { background: #edf4ff; color: var(--blue); }
+.directory-dialog { width: min(720px, 96vw); }
+.directory-dialog section { padding: 22px; }
+.toast-container { position: fixed; right: 24px; bottom: 24px; z-index: 2000; display: grid; gap: 8px; }
+.toast-message { max-width: 360px; padding: 11px 14px; border-radius: 8px; background: #344054; color: #fff; box-shadow: 0 8px 20px #10182826; opacity: 0; transform: translateY(8px); transition: opacity .18s, transform .18s; }
+.toast-message.visible { opacity: 1; transform: translateY(0); }
+.toast-message.error { background: #b42318; }
 .config-form footer { border-top: 1px solid var(--line); padding-top: 18px; }
 .detail-panel h3 { font-size: 15px; margin: 25px 0 10px; }
 @media (max-width: 640px) { .detail-overview, .form-grid { grid-template-columns: 1fr; } .check-row { flex-direction: column; gap: 6px; } .detail-tabs { gap: 18px; } }

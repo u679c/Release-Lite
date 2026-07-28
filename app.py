@@ -25,6 +25,7 @@ LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "release_lite.db"
 DATA_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
+DEFAULT_BROWSE_ROOTS = ("/srv", "/opt", "/var/www", str(Path.home()))
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("RELEASE_LITE_SECRET", secrets.token_hex(32))
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS projects (
  branch TEXT NOT NULL DEFAULT 'main', is_git INTEGER NOT NULL DEFAULT 1, start_command TEXT NOT NULL, stop_command TEXT DEFAULT '',
  pre_deploy_hook TEXT DEFAULT '', post_deploy_hook TEXT DEFAULT '', env_vars TEXT DEFAULT '',
  auto_deploy INTEGER NOT NULL DEFAULT 0, auto_restart INTEGER NOT NULL DEFAULT 0,
+ runtime TEXT NOT NULL DEFAULT 'python', python_executable TEXT DEFAULT 'python3', venv_path TEXT DEFAULT '.venv',
+ requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1,
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS deployments (
@@ -57,6 +60,24 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 
 
 def now(): return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+def server_ip():
+    # 优先取默认路由对应的网卡地址，而不是 hostname 解析出的回环地址。
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 80))
+            address = probe.getsockname()[0]
+            if address and not address.startswith("127."):
+                return address
+    except OSError:
+        pass
+    states = psutil.net_if_stats()
+    for interface, addresses in psutil.net_if_addrs().items():
+        if not states.get(interface) or not states[interface].isup:
+            continue
+        for address in addresses:
+            if address.family == socket.AF_INET and not address.address.startswith(("127.", "169.254.")):
+                return address.address
+    return "127.0.0.1"
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -81,10 +102,49 @@ def env_dict(raw):
         if line.strip() and not line.lstrip().startswith("#") and "=" in line:
             key, value = line.split("=", 1); result[key.strip()] = value.strip()
     return result
+def project_setting_path(root, configured, default=""):
+    value = (configured or default).strip()
+    if not value: return None
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+def apply_runtime_env(project, root, env):
+    if project.get("runtime", "python") != "python": return env
+    venv = project_setting_path(root, project.get("venv_path"), ".venv")
+    if venv and (venv / "bin").is_dir():
+        env["VIRTUAL_ENV"] = str(venv)
+        env["PATH"] = str(venv / "bin") + os.pathsep + env.get("PATH", "")
+    return env
+def prepare_python_environment(project, root, env, logfile):
+    if project.get("runtime", "python") != "python": return env
+    venv = project_setting_path(root, project.get("venv_path"), ".venv")
+    if not venv: return env
+    python = project.get("python_executable") or "python3"
+    if not (venv / "bin" / "python").exists():
+        run_command(f"{shlex.quote(python)} -m venv {shlex.quote(str(venv))}", root, env, logfile, "创建 Python 虚拟环境")
+    env = apply_runtime_env(project, root, env)
+    requirements = project_setting_path(root, project.get("requirements_file"), "requirements.txt")
+    if project.get("auto_install_dependencies") and requirements and requirements.is_file():
+        pip = venv / "bin" / "pip"
+        run_command(f"{shlex.quote(str(pip))} install -r {shlex.quote(str(requirements))}", root, env, logfile, "安装 pip 依赖")
+    return env
 def safe_project_path(project):
     path = Path(project["root_path"]).expanduser().resolve()
     if not path.is_dir(): raise RuntimeError(f"项目目录不存在或不可访问：{path}")
     return path
+def browse_roots():
+    configured = os.environ.get("RELEASE_LITE_BROWSE_ROOTS", "")
+    raw_roots = configured.split(os.pathsep) if configured else DEFAULT_BROWSE_ROOTS
+    roots = []
+    for raw in raw_roots:
+        path = Path(raw).expanduser().resolve()
+        if path.is_dir() and path not in roots: roots.append(path)
+    return roots
+def allowed_browse_path(path):
+    resolved = Path(path).expanduser().resolve()
+    if not any(resolved == root or root in resolved.parents for root in browse_roots()):
+        raise RuntimeError("该目录不在允许浏览的根目录中")
+    if not resolved.is_dir(): raise RuntimeError("目录不存在或不可访问")
+    return resolved
 def log_file(project_id, deployment_id): return LOG_DIR / f"project-{project_id}-deployment-{deployment_id}.log"
 def append_log(path, text):
     with open(path, "a", encoding="utf-8") as f: f.write(text)
@@ -135,7 +195,7 @@ def process_info(project):
 def start_project(project, operator="web"):
     root = safe_project_path(project); state = process_info(project)
     if state["process_alive"]: raise RuntimeError("项目进程仍在运行，无法重复启动")
-    env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"])
+    env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"]); env = apply_runtime_env(project, root, env)
     runtime_log = LOG_DIR / f"project-{project['id']}-runtime.log"
     output = open(runtime_log, "a", encoding="utf-8")
     output.write(f"\n--- start {now()} ---\n$ {project['start_command']}\n"); output.flush()
@@ -161,7 +221,7 @@ def stop_project(project, operator="web", intentional=True):
     write("UPDATE process_state SET expected_running=0,updated_at=? WHERE project_id=?", (now(), project["id"])); audit(project["id"], "停止", f"PID {state['pid']}", operator)
 def deploy_worker(project_id, deployment_id, revision=None):
     project = project_or_404(project_id); logfile = log_file(project_id, deployment_id); root = safe_project_path(project)
-    env = os.environ.copy(); env.update(env_dict(project["env_vars"]))
+    env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env = apply_runtime_env(project, root, env)
     try:
         if not project["is_git"]: raise RuntimeError("非 Git 项目不支持更新代码")
         append_log(logfile, f"代码更新开始：{now()}\n")
@@ -171,6 +231,7 @@ def deploy_worker(project_id, deployment_id, revision=None):
         else:
             git(root, "fetch --prune origin", logfile); git(root, f"checkout {shlex.quote(project['branch'])}", logfile); git(root, f"pull --ff-only origin {shlex.quote(project['branch'])}", logfile)
         commit = git_output(root, "rev-parse HEAD")
+        env = prepare_python_environment(project, root, env, logfile)
         if project["pre_deploy_hook"]: run_command(project["pre_deploy_hook"], root, env, logfile, "更新代码前钩子")
         stop_project(project, "deploy", intentional=False)
         if project["post_deploy_hook"]: run_command(project["post_deploy_hook"], root, env, logfile, "更新代码后钩子")
@@ -209,7 +270,7 @@ def overview():
     projects = rows("SELECT * FROM projects ORDER BY name")
     for p in projects: p["process"] = process_info(p)
     vm, disk = psutil.virtual_memory(), psutil.disk_usage("/")
-    return jsonify({"projects": projects, "system": {"hostname": socket.gethostname(), "os": f"{os.uname().sysname} {os.uname().release}", "cpu_count": psutil.cpu_count(), "cpu_percent": psutil.cpu_percent(), "memory_total": vm.total, "memory_used": vm.used, "memory_percent": vm.percent, "disk_total": disk.total, "disk_used": disk.used, "disk_percent": disk.percent, "network": psutil.net_io_counters()._asdict()}})
+    return jsonify({"projects": projects, "system": {"hostname": socket.gethostname(), "local_ip": server_ip(), "os": f"{os.uname().sysname} {os.uname().release}", "cpu_count": psutil.cpu_count(), "cpu_percent": psutil.cpu_percent(), "memory_total": vm.total, "memory_used": vm.used, "memory_percent": vm.percent, "disk_total": disk.total, "disk_used": disk.used, "disk_percent": disk.percent, "network": psutil.net_io_counters()._asdict()}})
 @app.get("/api/projects")
 def list_projects(): return jsonify(rows("SELECT * FROM projects ORDER BY name"))
 @app.post("/api/projects")
@@ -219,10 +280,10 @@ def save_project():
     try: safe_project_path({"root_path":root})
     except RuntimeError as e: return jsonify(error=str(e)), 400
     is_git=int(not bool(data.get("non_git")))
-    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),data.get("git_webhook_secret") if is_git else "",now())
+    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),data.get("runtime") or "python",data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("git_webhook_secret") if is_git else "",now())
     if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:11]+(wid,vals[11],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
+    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:16]+(wid,vals[16],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
@@ -246,6 +307,28 @@ def discover_scripts_api():
         safe_project_path({"root_path": root})
         return jsonify(discover_scripts(root))
     except RuntimeError as e:
+        return jsonify(error=str(e)), 400
+@app.get("/api/directories")
+def directories():
+    path = request.args.get("path")
+    roots = browse_roots()
+    if not path:
+        return jsonify({"path": None, "parent": None, "roots": [str(root) for root in roots], "directories": []})
+    try:
+        current = allowed_browse_path(path)
+        directories = []
+        for child in sorted(current.iterdir(), key=lambda item: item.name.lower()):
+            try:
+                if child.is_dir() and not child.name.startswith("."):
+                    resolved = child.resolve()
+                    if any(resolved == root or root in resolved.parents for root in roots):
+                        directories.append({"name": child.name, "path": str(resolved)})
+            except OSError:
+                continue
+        parent = current.parent
+        parent_value = str(parent) if any(parent == root or root in parent.parents for root in roots) else None
+        return jsonify({"path": str(current), "parent": parent_value, "roots": [str(root) for root in roots], "directories": directories})
+    except (RuntimeError, OSError) as e:
         return jsonify(error=str(e)), 400
 @app.get("/api/projects/<int:project_id>/logs/<kind>")
 def logs(project_id,kind):
@@ -287,8 +370,16 @@ def init():
     with closing(db()) as c:
         c.executescript(SCHEMA)
         columns = {row[1] for row in c.execute("PRAGMA table_info(projects)")}
-        if "is_git" not in columns:
-            c.execute("ALTER TABLE projects ADD COLUMN is_git INTEGER NOT NULL DEFAULT 1")
+        migrations = {
+            "is_git": "ALTER TABLE projects ADD COLUMN is_git INTEGER NOT NULL DEFAULT 1",
+            "runtime": "ALTER TABLE projects ADD COLUMN runtime TEXT NOT NULL DEFAULT 'python'",
+            "python_executable": "ALTER TABLE projects ADD COLUMN python_executable TEXT DEFAULT 'python3'",
+            "venv_path": "ALTER TABLE projects ADD COLUMN venv_path TEXT DEFAULT '.venv'",
+            "requirements_file": "ALTER TABLE projects ADD COLUMN requirements_file TEXT DEFAULT 'requirements.txt'",
+            "auto_install_dependencies": "ALTER TABLE projects ADD COLUMN auto_install_dependencies INTEGER NOT NULL DEFAULT 1",
+        }
+        for column, statement in migrations.items():
+            if column not in columns: c.execute(statement)
         c.commit()
 init()
 if __name__ == "__main__":
