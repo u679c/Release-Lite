@@ -35,7 +35,7 @@ deploy_locks_guard = threading.Lock()
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, root_path TEXT NOT NULL,
- branch TEXT NOT NULL DEFAULT 'main', start_command TEXT NOT NULL, stop_command TEXT DEFAULT '',
+ branch TEXT NOT NULL DEFAULT 'main', is_git INTEGER NOT NULL DEFAULT 1, start_command TEXT NOT NULL, stop_command TEXT DEFAULT '',
  pre_deploy_hook TEXT DEFAULT '', post_deploy_hook TEXT DEFAULT '', env_vars TEXT DEFAULT '',
  auto_deploy INTEGER NOT NULL DEFAULT 0, auto_restart INTEGER NOT NULL DEFAULT 0,
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -116,8 +116,20 @@ def process_info(project):
     info = {"pid": pid, "running": running, "process_alive": process_alive, "started_at": state["started_at"] if state else None, "expected_running": expected_running, "cpu": 0, "memory": 0, "ports": []}
     if process_alive:
         try:
-            proc = psutil.Process(pid); info["cpu"] = proc.cpu_percent(interval=0.05); info["memory"] = proc.memory_info().rss
-            info["ports"] = sorted({x.laddr.port for x in proc.net_connections(kind="inet") if x.status == psutil.CONN_LISTEN and x.laddr})
+            proc = psutil.Process(pid)
+            # shell、npm、Python 启动脚本经常会派生真正的服务子进程；
+            # 资源与监听端口都需按整个进程树汇总，而不是只看父进程。
+            processes = [proc, *proc.children(recursive=True)]
+            ports = set()
+            for item in processes:
+                try:
+                    info["cpu"] += item.cpu_percent(interval=0.05)
+                    info["memory"] += item.memory_info().rss
+                    ports.update(conn.laddr.port for conn in item.net_connections(kind="inet") if conn.status == psutil.CONN_LISTEN and conn.laddr)
+                except (psutil.Error, OSError):
+                    continue
+            info["cpu"] = round(info["cpu"], 1)
+            info["ports"] = sorted(ports)
         except (psutil.Error, OSError): pass
     return info
 def start_project(project, operator="web"):
@@ -151,28 +163,30 @@ def deploy_worker(project_id, deployment_id, revision=None):
     project = project_or_404(project_id); logfile = log_file(project_id, deployment_id); root = safe_project_path(project)
     env = os.environ.copy(); env.update(env_dict(project["env_vars"]))
     try:
-        append_log(logfile, f"部署开始：{now()}\n")
+        if not project["is_git"]: raise RuntimeError("非 Git 项目不支持更新代码")
+        append_log(logfile, f"代码更新开始：{now()}\n")
         if not (root / ".git").exists(): raise RuntimeError("项目目录不是 Git 仓库")
         if revision:
             git(root, "fetch --all --tags", logfile); git(root, f"checkout --detach {shlex.quote(revision)}", logfile)
         else:
             git(root, "fetch --prune origin", logfile); git(root, f"checkout {shlex.quote(project['branch'])}", logfile); git(root, f"pull --ff-only origin {shlex.quote(project['branch'])}", logfile)
         commit = git_output(root, "rev-parse HEAD")
-        if project["pre_deploy_hook"]: run_command(project["pre_deploy_hook"], root, env, logfile, "部署前钩子")
+        if project["pre_deploy_hook"]: run_command(project["pre_deploy_hook"], root, env, logfile, "更新代码前钩子")
         stop_project(project, "deploy", intentional=False)
-        if project["post_deploy_hook"]: run_command(project["post_deploy_hook"], root, env, logfile, "部署后钩子")
+        if project["post_deploy_hook"]: run_command(project["post_deploy_hook"], root, env, logfile, "更新代码后钩子")
         start_project(project, "deploy")
-        write("UPDATE deployments SET status='success',revision=?,finished_at=?,message=? WHERE id=?", (commit, now(), "部署完成", deployment_id))
-        audit(project_id, "部署成功", commit, "deploy")
-        append_log(logfile, f"部署成功：{commit}\n")
+        write("UPDATE deployments SET status='success',revision=?,finished_at=?,message=? WHERE id=?", (commit, now(), "代码更新完成", deployment_id))
+        audit(project_id, "代码更新成功", commit, "deploy")
+        append_log(logfile, f"代码更新成功：{commit}\n")
     except Exception as exc:
-        msg = str(exc); append_log(logfile, f"\n部署失败：{msg}\n")
-        write("UPDATE deployments SET status='failed',finished_at=?,message=? WHERE id=?", (now(), msg, deployment_id)); audit(project_id, "部署失败", msg, "deploy")
+        msg = str(exc); append_log(logfile, f"\n代码更新失败：{msg}\n")
+        write("UPDATE deployments SET status='failed',finished_at=?,message=? WHERE id=?", (now(), msg, deployment_id)); audit(project_id, "代码更新失败", msg, "deploy")
     finally:
         with deploy_locks_guard: deploy_locks.pop(project_id, None)
 def queue_deploy(project, operator="web", revision=None, action="deploy"):
+    if not project["is_git"]: raise RuntimeError("非 Git 项目不支持更新代码")
     with deploy_locks_guard:
-        if project["id"] in deploy_locks: raise RuntimeError("该项目已有部署任务在执行")
+        if project["id"] in deploy_locks: raise RuntimeError("该项目已有代码更新任务在执行")
         did = write("INSERT INTO deployments(project_id,action,branch,revision,status,started_at,operator,log_path) VALUES(?,?,?,?,?,?,?,?)", (project["id"], action, project["branch"], revision, "running", now(), operator, str(log_file(project["id"], "pending"))))
         path = str(log_file(project["id"], did)); write("UPDATE deployments SET log_path=? WHERE id=?", (path, did))
         t = threading.Thread(target=deploy_worker, args=(project["id"], did, revision), daemon=True); deploy_locks[project["id"]] = t; t.start(); return did
@@ -204,10 +218,11 @@ def save_project():
     if not name or not root or not command: return jsonify(error="名称、项目目录和启动命令均为必填项"), 400
     try: safe_project_path({"root_path":root})
     except RuntimeError as e: return jsonify(error=str(e)), 400
-    vals=(name,root,data.get("branch") or "main",command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))),int(bool(data.get("auto_restart"))),data.get("git_webhook_secret") or "",now())
+    is_git=int(not bool(data.get("non_git")))
+    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),data.get("git_webhook_secret") if is_git else "",now())
     if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:10]+(wid,vals[10],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
+    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:11]+(wid,vals[11],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
@@ -249,13 +264,14 @@ def operations(): return jsonify(rows("SELECT o.*,p.name project_name FROM opera
 @app.post("/webhook/<int:project_id>/<secret>")
 def webhook(project_id,secret):
     p=project_or_404(project_id)
+    if not p["is_git"]: return jsonify(message="非 Git 项目不支持自动更新代码"),202
     if not hmac.compare_digest(secret,p["webhook_secret"]): abort(403)
     body=request.get_data()
     if p["git_webhook_secret"]:
         sig=request.headers.get("X-Hub-Signature-256",""); expected="sha256="+hmac.new(p["git_webhook_secret"].encode(),body,hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig,expected): abort(403)
     payload=request.get_json(silent=True) or {}; ref=payload.get("ref","")
-    if not p["auto_deploy"]: return jsonify(message="自动部署未开启"),202
+    if not p["auto_deploy"]: return jsonify(message="自动更新代码未开启"),202
     if ref and ref not in (p["branch"],"refs/heads/"+p["branch"]): return jsonify(message="分支不匹配，已忽略"),202
     try: return jsonify(deployment_id=queue_deploy(p,"webhook")),202
     except RuntimeError as e:return jsonify(message=str(e)),202
@@ -268,7 +284,12 @@ def monitor():
                 try: start_project(p,"monitor"); audit(p["id"],"异常自动重启",f"原 PID {state['pid']}","monitor")
                 except Exception as e:audit(p["id"],"自动重启失败",str(e),"monitor")
 def init():
-    with closing(db()) as c: c.executescript(SCHEMA); c.commit()
+    with closing(db()) as c:
+        c.executescript(SCHEMA)
+        columns = {row[1] for row in c.execute("PRAGMA table_info(projects)")}
+        if "is_git" not in columns:
+            c.execute("ALTER TABLE projects ADD COLUMN is_git INTEGER NOT NULL DEFAULT 1")
+        c.commit()
 init()
 if __name__ == "__main__":
     threading.Thread(target=monitor,daemon=True).start(); app.run(host="0.0.0.0",port=int(os.environ.get("PORT",8080)),debug=False)

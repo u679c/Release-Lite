@@ -1,42 +1,94 @@
 <!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Release Lite</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <a class="brand" href="#" onclick="showPage('overview');return false"><span class="brand-mark">R</span><span>Release <b>Lite</b><small>发布管理台</small></span></a>
-      <nav class="nav flex-column" aria-label="主导航">
-        <button class="nav-link active" data-page="overview" onclick="showPage('overview')"><span>▦</span> 首页</button>
-        <button class="nav-link" data-page="projects" onclick="showPage('projects')"><span>□</span> 项目管理</button>
-        <button class="nav-link" data-page="operations" onclick="showPage('operations')"><span>◷</span> 操作记录</button>
-      </nav>
-      <div class="sidebar-footer"><span class="online-dot"></span> 面板服务运行中</div>
-    </aside>
-    <div class="main-area">
-      <header class="topbar"><div><p class="eyebrow" id="pageEyebrow">OVERVIEW</p><h1 id="pageTitle">服务器概览</h1></div><div class="server-name" id="host">正在读取服务器信息…</div></header>
-      <main class="content-area">
-        <section class="page-view active" id="overview-page">
-          <section class="metrics row g-3" id="metrics"></section>
-          <section class="content-card system-card"><div class="section-heading"><div><p class="eyebrow">SERVER</p><h2>设备信息</h2></div><span class="muted">每 10 秒更新</span></div><div class="system-grid" id="systemInfo"></div></section>
-          <section class="content-card"><div class="section-heading"><div><p class="eyebrow">PROJECTS</p><h2>项目运行概况</h2></div><button class="btn btn-outline-primary btn-sm" onclick="showPage('projects')">查看全部</button></div><div id="projectSummary" class="summary-list"></div></section>
-        </section>
-        <section class="page-view" id="projects-page">
-          <div class="section-heading page-heading"><div><p class="eyebrow">PROJECTS</p><h2>项目管理</h2><p class="muted mb-0">管理项目部署、服务生命周期与运行日志。</p></div><button class="btn btn-primary" onclick="openForm()">+ 新建项目</button></div>
-          <section class="content-card project-table-card"><div class="table-responsive"><table class="table align-middle project-table mb-0"><thead><tr><th>项目</th><th>分支</th><th>状态</th><th>运行资源</th><th>端口</th><th class="text-end">操作</th></tr></thead><tbody id="projects"></tbody></table></div></section>
-        </section>
-        <section class="page-view" id="operations-page">
-          <div class="section-heading page-heading"><div><p class="eyebrow">ACTIVITY</p><h2>操作记录</h2><p class="muted mb-0">最近 100 条部署、启动、停止和自动恢复操作。</p></div><button class="btn btn-outline-secondary btn-sm" onclick="refresh()">刷新</button></div>
-          <section class="content-card operation-card"><div id="operations"></div></section>
-        </section>
-      </main>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Release Lite</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a
+          class="brand"
+          href="#"
+          onclick="
+            showPage('overview');
+            return false;
+          "
+          ><span class="brand-mark">R</span><span>Release <b>Lite</b><small>发布管理台</small></span></a
+        >
+        <nav class="nav flex-column" aria-label="主导航">
+          <button class="nav-link active" data-page="overview" onclick="showPage('overview')">
+            <span><i class="bi bi-speedometer2"></i></span> 首页
+          </button>
+          <button class="nav-link" data-page="projects" onclick="showPage('projects')">
+            <span><i class="bi bi-box-seam"></i></span> 项目管理
+          </button>
+          <button class="nav-link" data-page="operations" onclick="showPage('operations')">
+            <span><i class="bi bi-clock-history"></i></span> 操作记录
+          </button>
+        </nav>
+        <div class="sidebar-footer"><span class="online-dot"></span> 面板服务运行中</div>
+      </aside>
+      <div class="main-area">
+        <main class="content-area">
+          <span id="pageEyebrow" hidden></span><span id="pageTitle" hidden></span><span id="host" hidden></span>
+          <section class="page-view active" id="overview-page">
+            <section class="metrics row g-3" id="metrics"></section>
+            <section class="content-card system-card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">SERVER</p>
+                  <h2>设备信息</h2>
+                </div>
+                <span class="muted">每 10 秒更新</span>
+              </div>
+              <div class="system-grid" id="systemInfo"></div>
+            </section>
+            <section class="content-card">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">PROJECTS</p>
+                  <h2>项目运行概况</h2>
+                </div>
+                <button class="btn btn-outline-primary btn-sm" onclick="showPage('projects')">查看全部</button>
+              </div>
+              <div id="projectSummary" class="summary-list"></div>
+            </section>
+          </section>
+          <section class="page-view" id="projects-page">
+            <div class="section-heading page-heading"><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
+            <section class="content-card project-table-card">
+              <div class="table-responsive">
+                <table class="table align-middle project-table mb-0">
+                  <thead>
+                    <tr>
+                      <th>项目</th>
+                      <th>分支</th>
+                      <th>状态</th>
+                      <th>运行资源</th>
+                      <th>端口</th>
+                      <th class="text-end">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="projects"></tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+          <section class="page-view" id="operations-page">
+            <div class="section-heading page-heading"><button class="btn btn-outline-secondary btn-sm" onclick="refresh()">刷新</button></div>
+            <section class="content-card operation-card"><div id="operations"></div></section>
+          </section>
+          <section class="page-view" id="detail-page">
+            <section class="content-card detail-page-card"><div id="details"></div></section>
+          </section>
+        </main>
+      </div>
     </div>
-  </div>
-  <dialog id="formDialog"><form method="dialog" id="projectForm"><header><h2 id="formTitle">新建项目</h2><button aria-label="关闭">×</button></header><input id="id" type="hidden"><label>项目名称<input id="name" required></label><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example"></label><label>Git 分支<input id="branch" value="main"></label><label>启动命令 <span class="hint">在项目目录中执行</span><input id="start_command" required placeholder="bash start.sh 或 python3 app.py"></label><div class="scripts"><button type="button" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down"></label><label>部署前钩子（可选）<textarea id="pre_deploy_hook" placeholder="例如：npm ci"></textarea></label><label>部署后钩子（可选）<textarea id="post_deploy_hook" placeholder="例如：npm run build"></textarea></label><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production"></textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password"></label><label class="check"><input id="auto_deploy" type="checkbox"> 收到 webhook 后自动部署</label><label class="check"><input id="auto_restart" type="checkbox"> 服务异常退出后自动重启</label><footer><button value="cancel">取消</button><button class="primary" value="default" onclick="saveProject(event)">保存</button></footer></form></dialog>
-  <dialog id="detailDialog"><section id="details"></section></dialog>
-  <script src="/static/app.js"></script>
-</body></html>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
