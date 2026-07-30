@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS projects (
  branch TEXT NOT NULL DEFAULT 'main', is_git INTEGER NOT NULL DEFAULT 1, start_command TEXT NOT NULL, stop_command TEXT DEFAULT '',
  pre_deploy_hook TEXT DEFAULT '', post_deploy_hook TEXT DEFAULT '', env_vars TEXT DEFAULT '',
  auto_deploy INTEGER NOT NULL DEFAULT 0, auto_restart INTEGER NOT NULL DEFAULT 0,
+ subprojects_enabled INTEGER NOT NULL DEFAULT 0, subprojects TEXT DEFAULT '',
  runtime TEXT NOT NULL DEFAULT 'python', python_executable TEXT DEFAULT 'python3', venv_path TEXT DEFAULT '.venv',
  requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1, node_version TEXT DEFAULT '',
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS deployments (
 );
 CREATE TABLE IF NOT EXISTS process_state (
  project_id INTEGER PRIMARY KEY, pid INTEGER, started_at TEXT, command TEXT, expected_running INTEGER NOT NULL DEFAULT 0,
+ subproject TEXT DEFAULT '',
  updated_at TEXT NOT NULL, FOREIGN KEY(project_id) REFERENCES projects(id)
 );
 CREATE TABLE IF NOT EXISTS operation_logs (
@@ -215,7 +217,7 @@ def process_info(project):
     expected_running = bool(state and state["expected_running"])
     # 用户停止后的状态以期望状态为准；这样进程退出回收的瞬间不会在界面上继续显示“运行中”。
     running = process_alive and expected_running
-    info = {"pid": pid, "running": running, "process_alive": process_alive, "started_at": state["started_at"] if state else None, "expected_running": expected_running, "cpu": 0, "memory": 0, "ports": []}
+    info = {"pid": pid, "running": running, "process_alive": process_alive, "started_at": state["started_at"] if state else None, "expected_running": expected_running, "subproject": state["subproject"] if state and "subproject" in state.keys() else "", "cpu": 0, "memory": 0, "ports": []}
     if process_alive:
         try:
             proc = psutil.Process(pid)
@@ -234,14 +236,24 @@ def process_info(project):
             info["ports"] = sorted(ports)
         except (psutil.Error, OSError): pass
     return info
-def start_project(project, operator="web"):
+def subproject_options(project):
+    return [item.strip() for item in (project.get("subprojects") or "").splitlines() if item.strip()]
+def start_project(project, operator="web", subproject=None):
     root = safe_project_path(project); state = process_info(project)
     if state["process_alive"]: raise RuntimeError("项目进程仍在运行，无法重复启动")
+    selected_subproject = ""
+    command = project["start_command"]
+    if project.get("subprojects_enabled"):
+        options = subproject_options(project)
+        if not options: raise RuntimeError("请先在项目配置中填写子项目")
+        selected_subproject = (subproject or state.get("subproject") or options[0]).strip()
+        if selected_subproject not in options: raise RuntimeError("所选子项目不在项目配置中")
+        command = command.replace("{{project}}", selected_subproject)
     env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"]); env = apply_runtime_env(project, root, env)
     runtime_log = LOG_DIR / f"project-{project['id']}-runtime.log"
-    append_log(runtime_log, f"\n--- start {now()} ---\n$ {project['start_command']}\n")
-    _, pid = launch_project_terminal(project, root, env, runtime_log)
-    write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,updated_at=excluded.updated_at", (project["id"], pid, now(), project["start_command"], now()))
+    append_log(runtime_log, f"\n--- start {now()} ---\n$ {command}\n")
+    _, pid = launch_project_terminal(project, root, env, runtime_log, command)
+    write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,subproject,updated_at) VALUES(?,?,?,?,1,?,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,subproject=excluded.subproject,updated_at=excluded.updated_at", (project["id"], pid, now(), command, selected_subproject, now()))
     audit(project["id"], "启动", f"PID {pid}", operator); return pid
 def stop_project(project, operator="web", intentional=True):
     close_project_terminal(project["id"])
@@ -326,20 +338,25 @@ def save_project():
     try: safe_project_path({"root_path":root})
     except RuntimeError as e: return jsonify(error=str(e)), 400
     is_git=int(not bool(data.get("non_git")))
-    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
+    subprojects_enabled = int(bool(data.get("subprojects_enabled")))
+    subprojects = data.get("subprojects") or ""
+    if subprojects_enabled and not subproject_options({"subprojects": subprojects}): return jsonify(error="请至少填写一个子项目"), 400
+    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),subprojects_enabled,subprojects,runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
     if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:17]+(wid,vals[17],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,subprojects_enabled=?,subprojects=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
+    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,subprojects_enabled,subprojects,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:19]+(wid,vals[19],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
 @app.post("/api/projects/<int:project_id>/action/<action>")
 def action(project_id,action):
     p=project_or_404(project_id)
+    data = request.get_json(silent=True) or {}
+    subproject = (data.get("subproject") or "").strip()
     try:
-        if action=="start": start_project(p)
+        if action=="start": start_project(p, subproject=subproject)
         elif action=="stop": stop_project(p)
-        elif action=="restart": stop_project(p); start_project(p); audit(project_id,"重启",p["name"])
+        elif action=="restart": stop_project(p); start_project(p, subproject=subproject); audit(project_id,"重启",p["name"])
         elif action=="deploy": return jsonify(deployment_id=queue_deploy(p))
         else: abort(404)
         return jsonify(ok=True)
@@ -428,7 +445,7 @@ def terminal_session_name(project_id):
     return f"release-lite-project-{project_id}" if project_id else "release-lite-shell"
 def terminal_cwd(project_id):
     return safe_project_path(project_or_404(project_id)) if project_id else Path.home()
-def launch_project_terminal(project, root, env, logfile):
+def launch_project_terminal(project, root, env, logfile, command):
     if not shutil.which("tmux"):
         raise RuntimeError("未安装 tmux。请先安装 tmux 后再启动项目。")
     name = terminal_session_name(project["id"])
@@ -439,8 +456,8 @@ def launch_project_terminal(project, root, env, logfile):
     # 确保 pnpm/corepack 与项目所选的 Node 版本一致。
     runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
     exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
-    command = f"{exports}exec {project['start_command']}"
-    subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", command], check=True, env=env)
+    shell_command = f"{exports}exec {command}"
+    subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
     try:
         subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"cat >> {shlex.quote(str(logfile))}"], check=True)
         for _ in range(10):
@@ -586,9 +603,13 @@ def init():
             "requirements_file": "ALTER TABLE projects ADD COLUMN requirements_file TEXT DEFAULT 'requirements.txt'",
             "auto_install_dependencies": "ALTER TABLE projects ADD COLUMN auto_install_dependencies INTEGER NOT NULL DEFAULT 1",
             "node_version": "ALTER TABLE projects ADD COLUMN node_version TEXT DEFAULT ''",
+            "subprojects_enabled": "ALTER TABLE projects ADD COLUMN subprojects_enabled INTEGER NOT NULL DEFAULT 0",
+            "subprojects": "ALTER TABLE projects ADD COLUMN subprojects TEXT DEFAULT ''",
         }
         for column, statement in migrations.items():
             if column not in columns: c.execute(statement)
+        process_columns = {row[1] for row in c.execute("PRAGMA table_info(process_state)")}
+        if "subproject" not in process_columns: c.execute("ALTER TABLE process_state ADD COLUMN subproject TEXT DEFAULT ''")
         c.commit()
 init()
 if __name__ == "__main__":

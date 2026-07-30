@@ -86,7 +86,7 @@ async function refresh() {
       .map((x) => `<div><b>${esc(x[0])}</b><span>${esc(x[1])}</span></div>`)
       .join("");
     $("#projectSummary").innerHTML = d.projects.length
-      ? d.projects.map((p) => `<div class="summary-item"><div><b>${esc(p.name)}</b><small>${p.is_git ? esc(p.branch) + " · " : ""}PID ${p.process.pid || "-"}</small></div>${status(p)}</div>`).join("")
+      ? d.projects.map((p) => `<button type="button" class="summary-item" onclick="details(${p.id})" aria-label="查看项目 ${esc(p.name)} 详情"><span><b>${esc(p.name)}</b><small>${p.is_git ? esc(p.branch) + " · " : ""}PID ${p.process.pid || "-"}</small><small>内存 ${bytes(p.process.memory)}</small></span>${status(p)}</button>`).join("")
       : '<span class="muted">还没有项目，前往项目管理页新建一个项目。</span>';
     renderProjects();
     const ops = await api("/api/operations");
@@ -270,7 +270,8 @@ function openTerminal(projectId) {
 }
 async function act(id, a) {
   try {
-    const r = await api(`/api/projects/${id}/action/${a}`, { method: "POST" });
+    const subproject = $("#subprojectSelect")?.value || "";
+    const r = await api(`/api/projects/${id}/action/${a}`, { method: "POST", body: JSON.stringify({ subproject }) });
     if (r.deployment_id) toast("代码更新任务已开始，可在详情页查看日志。");
     await refresh();
     if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id);
@@ -316,6 +317,8 @@ function openEditor(id, fromRoute = false) {
       requirements_file: "requirements.txt",
       auto_install_dependencies: 1,
       node_version: "",
+      subprojects_enabled: 0,
+      subprojects: "",
       process: { running: false },
     },
     "config",
@@ -338,7 +341,11 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
         )
         .join("")
     : '<p class="muted">暂无代码更新记录</p>';
-  const runActions = !isNew ? `<div class="runtime-actions"><div class="runtime-actions-left">${x.running ? `<button class="btn btn-outline-danger btn-sm" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success btn-sm" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary btn-sm" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i> 重启</button></div><button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>` : "";
+  const subprojectOptions = String(p.subprojects || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  const hasSubprojects = Boolean(p.subprojects_enabled);
+  const subprojectControl = hasSubprojects ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item)}" ${item === x.subproject ? "selected" : ""}>${esc(item)}</option>`).join("")}</select>` : "";
+  const actionSize = hasSubprojects ? "" : " btn-sm";
+  const runActions = !isNew ? `<div class="runtime-actions"><div class="runtime-actions-left ${hasSubprojects ? "has-subprojects" : ""}">${subprojectControl}${x.running ? `<button class="btn btn-outline-danger${actionSize}" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success${actionSize}" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary${actionSize}" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i> 重启</button></div><button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>` : "";
   const gitInfo = p.is_git ? `<div><small>Git 分支</small><b>${esc(p.branch || "main")}</b></div>` : "";
   const info = `${runActions}<div class="detail-overview"><div><small>项目名称</small><b>${esc(p.name || "未命名项目")}</b></div><div><small>运行状态</small>${status(p)}</div><div><small>运行环境</small><b>${runtimeLabel(p.runtime, p.node_version)}</b></div>${gitInfo}<div><small>项目目录</small><b class="mono">${esc(p.root_path || "-")}</b></div><div><small>运行进程</small><b>PID ${x.pid || "-"} · CPU ${x.cpu || 0}% · ${bytes(x.memory)}</b></div><div><small>监听端口</small><b>${x.ports?.join(", ") || "-"}</b></div><div class="service-addresses"><small>服务地址</small>${accessLinks(x.ports || [])}</div></div>${p.is_git ? `<h3>代码更新历史</h3>${history}` : ""}`;
   const webhook = p.id ? `${location.origin}/webhook/${p.id}/${p.webhook_secret}` : "保存项目后自动生成";
@@ -384,6 +391,7 @@ function setupProjectOptions(project) {
   }
   loadNodeVersions(project.node_version || "");
   toggleRuntimeConfig();
+  toggleSubprojectsConfig();
   toggleGitProject();
 }
 function toggleRuntimeConfig() {
@@ -391,6 +399,13 @@ function toggleRuntimeConfig() {
   $("#pythonRuntimeFields").hidden = runtime !== "python";
   $("#nodeRuntimeFields").hidden = runtime !== "node";
   $("#genericRuntimeHint").hidden = runtime !== "generic";
+}
+function toggleSubprojectsConfig() {
+  const enabled = $("#subprojects_enabled")?.checked;
+  const field = $("#subprojectsField");
+  const input = $("#subprojects");
+  if (field) field.hidden = !enabled;
+  if (input) input.required = enabled;
 }
 async function loadNodeVersions(selectedVersion) {
   const select = $("#node_version");
@@ -439,7 +454,8 @@ function selectDirectory(path) {
 }
 function configForm(p, isNew) {
   const v = (k) => esc(p[k] || "");
-  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label>Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><label>启动命令 <span class="hint">在项目目录中执行</span><input id="start_command" required placeholder="bash start.sh 或 python3 app.py" value="${v("start_command")}"></label><div class="scripts"><button type="button" style="width:200px;" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label>更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label>更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><div class="check-row"><label class="check"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div><footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
+  const subprojectsConfig = `<label class="check"><input id="subprojects_enabled" type="checkbox" ${p.subprojects_enabled ? "checked" : ""} onchange="toggleSubprojectsConfig()"> 启用子项目</label><label id="subprojectsField">子项目配置 <span class="hint">每行一个名称；启动命令可使用 {{project}}</span><textarea id="subprojects" placeholder="admin&#10;web&#10;worker">${v("subprojects")}</textarea></label>`;
+  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label>Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><label>启动命令 <span class="hint">在项目目录中执行；子项目可用 {{project}}</span><input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}"></label>${subprojectsConfig}<div class="scripts"><button type="button" style="width:200px;" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label>更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label>更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><div class="check-row"><label class="check"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div><footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
 }
 function showDetailTab(tab) {
   const id = $("#id")?.value || "new";
@@ -466,11 +482,12 @@ function useScript() {
 async function saveProject(e) {
   e.preventDefault();
   const data = {};
-  ["id", "name", "root_path", "branch", "start_command", "stop_command", "pre_deploy_hook", "post_deploy_hook", "env_vars", "git_webhook_secret", "runtime", "python_executable", "venv_path", "requirements_file", "node_version"].forEach(
+  ["id", "name", "root_path", "branch", "start_command", "stop_command", "pre_deploy_hook", "post_deploy_hook", "env_vars", "git_webhook_secret", "runtime", "python_executable", "venv_path", "requirements_file", "node_version", "subprojects"].forEach(
     (k) => (data[k] = $("#" + k).value),
   );
   data.auto_deploy = $("#auto_deploy").checked;
   data.auto_restart = $("#auto_restart").checked;
+  data.subprojects_enabled = $("#subprojects_enabled").checked;
   data.non_git = $("#non_git").checked;
   data.auto_install_dependencies = $("#auto_install_dependencies").checked;
   try {
