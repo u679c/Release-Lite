@@ -8,6 +8,7 @@
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+brew install tmux # macOS；Linux 可使用对应包管理器安装 tmux
 export RELEASE_LITE_SECRET='请替换为随机长字符串'
 export RELEASE_LITE_BROWSE_ROOTS='/srv/apps:/opt/projects'
 python app.py
@@ -27,6 +28,10 @@ python app.py
 目前运行环境仅支持 Python。可在项目配置中填写 Python 命令、虚拟环境目录（默认 `.venv`）和 pip 依赖文件（默认 `requirements.txt`）。执行「更新代码」时，系统会在虚拟环境不存在时自动创建它；勾选自动安装依赖后，会执行 `pip install -r requirements.txt`。项目启动时会优先使用该虚拟环境。
 
 项目目录选择器只允许浏览 `RELEASE_LITE_BROWSE_ROOTS` 指定的目录。多个根目录使用系统路径分隔符（Linux/macOS 为 `:`）连接；未设置时默认允许 `/srv`、`/opt`、`/var/www` 和当前用户家目录。
+
+## 交互终端
+
+终端页基于 tmux：可连接到全局会话或项目专属会话，浏览器关闭后会话仍会保留。项目会话会自动进入项目根目录；可在终端中使用 tmux 的默认快捷键进行分屏（`Ctrl-b` 后按 `%` 或 `"`）。
 
 ## Webhook 自动部署
 

@@ -2,8 +2,10 @@ import hashlib
 import hmac
 import json
 import os
+import pty
 import secrets
 import shlex
+import shutil
 import signal
 import socket
 import sqlite3
@@ -11,12 +13,16 @@ import subprocess
 import threading
 import time
 import uuid
+import fcntl
+import struct
+import termios
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
+from flask_socketio import SocketIO
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,8 +35,11 @@ DEFAULT_BROWSE_ROOTS = ("/srv", "/opt", "/var/www", str(Path.home()))
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("RELEASE_LITE_SECRET", secrets.token_hex(32))
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 deploy_locks = {}
 deploy_locks_guard = threading.Lock()
+terminal_sessions = {}
+terminal_sessions_guard = threading.Lock()
 
 
 SCHEMA = """
@@ -40,7 +49,7 @@ CREATE TABLE IF NOT EXISTS projects (
  pre_deploy_hook TEXT DEFAULT '', post_deploy_hook TEXT DEFAULT '', env_vars TEXT DEFAULT '',
  auto_deploy INTEGER NOT NULL DEFAULT 0, auto_restart INTEGER NOT NULL DEFAULT 0,
  runtime TEXT NOT NULL DEFAULT 'python', python_executable TEXT DEFAULT 'python3', venv_path TEXT DEFAULT '.venv',
- requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1,
+ requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1, node_version TEXT DEFAULT '',
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS deployments (
@@ -78,6 +87,13 @@ def server_ip():
             if address.family == socket.AF_INET and not address.address.startswith(("127.", "169.254.")):
                 return address.address
     return "127.0.0.1"
+def system_disk_usage():
+    # macOS 的 / 是只读系统卷；真实用户文件和应用占用在 APFS Data 卷中。
+    # Linux/Windows 环境则继续使用系统根卷。
+    data_volume = Path("/System/Volumes/Data")
+    if os.uname().sysname == "Darwin" and data_volume.is_dir():
+        return psutil.disk_usage(str(data_volume))
+    return psutil.disk_usage("/")
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -107,12 +123,32 @@ def project_setting_path(root, configured, default=""):
     if not value: return None
     path = Path(value).expanduser()
     return path.resolve() if path.is_absolute() else (root / path).resolve()
+def nvm_dir():
+    return Path(os.environ.get("NVM_DIR") or (Path.home() / ".nvm")).expanduser().resolve()
+def installed_node_versions():
+    versions_path = nvm_dir() / "versions" / "node"
+    if not versions_path.is_dir(): return []
+    return sorted((item.name for item in versions_path.iterdir() if item.is_dir() and (item / "bin" / "node").exists()), reverse=True)
+def node_bin(version):
+    if not version: return None
+    candidates = installed_node_versions()
+    wanted = version if version.startswith("v") else "v" + version
+    matches = [item for item in candidates if item == wanted or item.startswith(wanted + ".")]
+    if not matches: raise RuntimeError(f"未找到 NVM 中的 Node.js 版本：{version}")
+    return nvm_dir() / "versions" / "node" / matches[0] / "bin"
 def apply_runtime_env(project, root, env):
-    if project.get("runtime", "python") != "python": return env
-    venv = project_setting_path(root, project.get("venv_path"), ".venv")
-    if venv and (venv / "bin").is_dir():
-        env["VIRTUAL_ENV"] = str(venv)
-        env["PATH"] = str(venv / "bin") + os.pathsep + env.get("PATH", "")
+    runtime = project.get("runtime", "python")
+    if runtime == "python":
+        venv = project_setting_path(root, project.get("venv_path"), ".venv")
+        if venv and (venv / "bin").is_dir():
+            env["VIRTUAL_ENV"] = str(venv)
+            env["PATH"] = str(venv / "bin") + os.pathsep + env.get("PATH", "")
+    elif runtime == "node":
+        version_bin = node_bin(project.get("node_version"))
+        if version_bin:
+            env["NVM_DIR"] = str(nvm_dir())
+            env["NVM_BIN"] = str(version_bin)
+            env["PATH"] = str(version_bin) + os.pathsep + env.get("PATH", "")
     return env
 def prepare_python_environment(project, root, env, logfile):
     if project.get("runtime", "python") != "python": return env
@@ -146,6 +182,12 @@ def allowed_browse_path(path):
     if not resolved.is_dir(): raise RuntimeError("目录不存在或不可访问")
     return resolved
 def log_file(project_id, deployment_id): return LOG_DIR / f"project-{project_id}-deployment-{deployment_id}.log"
+def project_log_path(project_id, kind):
+    if kind == "runtime": return LOG_DIR / f"project-{project_id}-runtime.log"
+    if kind == "deploy":
+        latest = one("SELECT log_path FROM deployments WHERE project_id=? ORDER BY id DESC LIMIT 1", (project_id,))
+        return Path(latest["log_path"]) if latest and latest.get("log_path") else LOG_DIR / f"project-{project_id}-no-deploy.log"
+    abort(404)
 def append_log(path, text):
     with open(path, "a", encoding="utf-8") as f: f.write(text)
 def run_command(command, cwd, env, logfile, title):
@@ -197,12 +239,12 @@ def start_project(project, operator="web"):
     if state["process_alive"]: raise RuntimeError("项目进程仍在运行，无法重复启动")
     env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"]); env = apply_runtime_env(project, root, env)
     runtime_log = LOG_DIR / f"project-{project['id']}-runtime.log"
-    output = open(runtime_log, "a", encoding="utf-8")
-    output.write(f"\n--- start {now()} ---\n$ {project['start_command']}\n"); output.flush()
-    proc = subprocess.Popen(project["start_command"], shell=True, cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
-    write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,updated_at=excluded.updated_at", (project["id"], proc.pid, now(), project["start_command"], now()))
-    audit(project["id"], "启动", f"PID {proc.pid}", operator); return proc.pid
+    append_log(runtime_log, f"\n--- start {now()} ---\n$ {project['start_command']}\n")
+    _, pid = launch_project_terminal(project, root, env, runtime_log)
+    write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,updated_at) VALUES(?,?,?,?,1,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,updated_at=excluded.updated_at", (project["id"], pid, now(), project["start_command"], now()))
+    audit(project["id"], "启动", f"PID {pid}", operator); return pid
 def stop_project(project, operator="web", intentional=True):
+    close_project_terminal(project["id"])
     state = one("SELECT * FROM process_state WHERE project_id=?", (project["id"],))
     if not state or not alive(state["pid"]):
         write("UPDATE process_state SET expected_running=0,updated_at=? WHERE project_id=?", (now(), project["id"])); return
@@ -269,21 +311,25 @@ def index(): return render_template("index.html")
 def overview():
     projects = rows("SELECT * FROM projects ORDER BY name")
     for p in projects: p["process"] = process_info(p)
-    vm, disk = psutil.virtual_memory(), psutil.disk_usage("/")
+    vm, disk = psutil.virtual_memory(), system_disk_usage()
     return jsonify({"projects": projects, "system": {"hostname": socket.gethostname(), "local_ip": server_ip(), "os": f"{os.uname().sysname} {os.uname().release}", "cpu_count": psutil.cpu_count(), "cpu_percent": psutil.cpu_percent(), "memory_total": vm.total, "memory_used": vm.used, "memory_percent": vm.percent, "disk_total": disk.total, "disk_used": disk.used, "disk_percent": disk.percent, "network": psutil.net_io_counters()._asdict()}})
 @app.get("/api/projects")
 def list_projects(): return jsonify(rows("SELECT * FROM projects ORDER BY name"))
+@app.get("/api/node-versions")
+def node_versions(): return jsonify({"versions": installed_node_versions(), "nvm_dir": str(nvm_dir())})
 @app.post("/api/projects")
 def save_project():
     data=request.get_json(force=True); name=(data.get("name") or "").strip(); root=(data.get("root_path") or "").strip(); command=(data.get("start_command") or "").strip()
     if not name or not root or not command: return jsonify(error="名称、项目目录和启动命令均为必填项"), 400
+    runtime = data.get("runtime") or "python"
+    if runtime not in {"python", "node", "generic"}: return jsonify(error="不支持的运行环境"), 400
     try: safe_project_path({"root_path":root})
     except RuntimeError as e: return jsonify(error=str(e)), 400
     is_git=int(not bool(data.get("non_git")))
-    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),data.get("runtime") or "python",data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("git_webhook_secret") if is_git else "",now())
+    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
     if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:16]+(wid,vals[16],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
+    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:17]+(wid,vals[17],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
@@ -332,9 +378,21 @@ def directories():
         return jsonify(error=str(e)), 400
 @app.get("/api/projects/<int:project_id>/logs/<kind>")
 def logs(project_id,kind):
-    project_or_404(project_id); path = LOG_DIR / f"project-{project_id}-runtime.log" if kind=="runtime" else Path((one("SELECT log_path FROM deployments WHERE project_id=? ORDER BY id DESC LIMIT 1",(project_id,)) or {}).get("log_path", ""))
+    project_or_404(project_id); path = project_log_path(project_id, kind)
     if not path.exists(): return jsonify(text="暂无日志")
     return jsonify(text=path.read_text(encoding="utf-8", errors="replace")[-100000:])
+@app.get("/api/projects/<int:project_id>/logs/summary")
+def log_summary(project_id):
+    project_or_404(project_id)
+    runtime, deploy = project_log_path(project_id, "runtime"), project_log_path(project_id, "deploy")
+    return jsonify({"runtime_size": runtime.stat().st_size if runtime.exists() else 0, "deploy_size": deploy.stat().st_size if deploy.exists() else 0})
+@app.post("/api/projects/<int:project_id>/logs/<kind>/clear")
+def clear_log(project_id, kind):
+    project_or_404(project_id); path = project_log_path(project_id, kind)
+    if path.exists():
+        with open(path, "w", encoding="utf-8"): pass
+    audit(project_id, f"清除{'运行' if kind == 'runtime' else '代码更新'}日志", str(path))
+    return jsonify(ok=True)
 @app.get("/api/projects/<int:project_id>/deployments")
 def deployments(project_id): return jsonify(rows("SELECT * FROM deployments WHERE project_id=? ORDER BY id DESC LIMIT 50",(project_id,)))
 @app.post("/api/projects/<int:project_id>/rollback/<int:deployment_id>")
@@ -366,6 +424,156 @@ def monitor():
             if state and state["expected_running"] and not alive(state["pid"]):
                 try: start_project(p,"monitor"); audit(p["id"],"异常自动重启",f"原 PID {state['pid']}","monitor")
                 except Exception as e:audit(p["id"],"自动重启失败",str(e),"monitor")
+def terminal_session_name(project_id):
+    return f"release-lite-project-{project_id}" if project_id else "release-lite-shell"
+def terminal_cwd(project_id):
+    return safe_project_path(project_or_404(project_id)) if project_id else Path.home()
+def launch_project_terminal(project, root, env, logfile):
+    if not shutil.which("tmux"):
+        raise RuntimeError("未安装 tmux。请先安装 tmux 后再启动项目。")
+    name = terminal_session_name(project["id"])
+    close_project_terminal(project["id"])
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    # tmux server 会保留创建时的环境；不能只依赖 subprocess 的 env，
+    # 否则已有 tmux server 可能仍用旧 Node.js 的 PATH。把运行环境写入 pane 命令，
+    # 确保 pnpm/corepack 与项目所选的 Node 版本一致。
+    runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
+    exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
+    command = f"{exports}exec {project['start_command']}"
+    subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", command], check=True, env=env)
+    try:
+        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"cat >> {shlex.quote(str(logfile))}"], check=True)
+        for _ in range(10):
+            result = subprocess.run(["tmux", "display-message", "-p", "-t", name, "#{pane_pid}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            if result.returncode == 0 and result.stdout.strip().isdigit():
+                return name, int(result.stdout.strip())
+            time.sleep(.05)
+    except Exception:
+        close_project_terminal(project["id"])
+        raise
+    close_project_terminal(project["id"])
+    raise RuntimeError("项目终端未能启动，请查看运行日志")
+def close_project_terminal(project_id):
+    if not shutil.which("tmux"):
+        return False
+    name = terminal_session_name(project_id)
+    result = subprocess.run(["tmux", "kill-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return result.returncode == 0
+def tmux_session_exists(name):
+    return shutil.which("tmux") and subprocess.run(["tmux", "has-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+def managed_tmux_sessions():
+    if not shutil.which("tmux"):
+        return []
+    result = subprocess.run(
+        ["tmux", "list-sessions", "-F", "#{session_name}\t#{session_created_string}\t#{session_windows}\t#{session_attached}"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    sessions = []
+    for line in result.stdout.splitlines():
+        name, created_at, windows, attached = (line.split("\t") + ["", "", "", ""])[:4]
+        if not name.startswith("release-lite-"):
+            continue
+        project_id = None
+        if name.startswith("release-lite-project-"):
+            try: project_id = int(name.rsplit("-", 1)[1])
+            except ValueError: continue
+        project = one("SELECT id,name,root_path FROM projects WHERE id=?", (project_id,)) if project_id else None
+        sessions.append({
+            "name": name, "created_at": created_at, "windows": int(windows or 0), "attached": bool(int(attached or 0)),
+            "project_id": project_id, "project_name": project["name"] if project else None,
+            "root_path": project["root_path"] if project else str(Path.home()),
+        })
+    return sessions
+
+@app.get("/api/tmux/sessions")
+def tmux_sessions_list():
+    return jsonify(sessions=managed_tmux_sessions())
+
+@app.delete("/api/tmux/sessions/<session_name>")
+def tmux_session_delete(session_name):
+    if not session_name.startswith("release-lite-"):
+        abort(404)
+    managed = {item["name"]: item for item in managed_tmux_sessions()}
+    session = managed.get(session_name)
+    if not session:
+        abort(404)
+    if session["project_id"]:
+        stop_project(project_or_404(session["project_id"]), "tmux")
+    else:
+        subprocess.run(["tmux", "kill-session", "-t", session_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        audit(None, "关闭 Tmux 会话", session_name)
+    return jsonify(ok=True)
+def close_terminal_connection(sid):
+    with terminal_sessions_guard:
+        terminal = terminal_sessions.pop(sid, None)
+    if not terminal: return
+    try: os.close(terminal["master_fd"])
+    except OSError: pass
+    if terminal["process"].poll() is None:
+        terminal["process"].terminate()
+def terminal_reader(sid, master_fd, process):
+    try:
+        while process.poll() is None:
+            try: data = os.read(master_fd, 4096)
+            except OSError: break
+            if not data: break
+            socketio.emit("terminal_output", {"data": data.decode("utf-8", errors="replace")}, to=sid)
+    finally:
+        socketio.emit("terminal_closed", {}, to=sid)
+        close_terminal_connection(sid)
+@socketio.on("terminal_open")
+def terminal_open(data):
+    sid = request.sid
+    close_terminal_connection(sid)
+    try:
+        project_id = int(data.get("project_id")) if data and data.get("project_id") else None
+        if not project_id:
+            raise RuntimeError("请从项目详情中打开终端")
+        project = project_or_404(project_id)
+        if not process_info(project)["running"]:
+            raise RuntimeError("项目未运行，请先启动项目")
+        session_name = terminal_session_name(project_id)
+        if not tmux_session_exists(session_name):
+            raise RuntimeError("项目终端会话不存在，请重启项目后重试")
+        rows = max(1, int(data.get("rows", 24)))
+        cols = max(1, int(data.get("cols", 80)))
+        master_fd, slave_fd = pty.openpty()
+        # 必须在 tmux attach 前设置初始 PTY 尺寸；否则 tmux 会把默认的 24 行
+        # 客户端尺寸当成上限，导致浏览器只能缩小、无法放大终端窗口。
+        size = struct.pack("HHHH", rows, cols, 0, 0)
+        fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, size)
+        process = subprocess.Popen(["tmux", "attach-session", "-t", session_name], stdin=slave_fd, stdout=slave_fd, stderr=slave_fd, start_new_session=True, close_fds=True)
+        os.close(slave_fd)
+        with terminal_sessions_guard:
+            terminal_sessions[sid] = {"master_fd": master_fd, "process": process, "session_name": session_name}
+        socketio.start_background_task(terminal_reader, sid, master_fd, process)
+        socketio.emit("terminal_ready", {"session": session_name}, to=sid)
+    except Exception as exc:
+        socketio.emit("terminal_error", {"message": str(exc)}, to=sid)
+@socketio.on("terminal_input")
+def terminal_input(data):
+    with terminal_sessions_guard:
+        terminal = terminal_sessions.get(request.sid)
+    if terminal and data:
+        try: os.write(terminal["master_fd"], data.get("data", "").encode())
+        except OSError: pass
+@socketio.on("terminal_resize")
+def terminal_resize(data):
+    with terminal_sessions_guard:
+        terminal = terminal_sessions.get(request.sid)
+    if terminal and data:
+        try:
+            rows, cols = int(data.get("rows", 24)), int(data.get("cols", 80))
+            size = struct.pack("HHHH", rows, cols, 0, 0)
+            fcntl.ioctl(terminal["master_fd"], termios.TIOCSWINSZ, size)
+            # tmux attach 是独立的会话进程，ioctl 本身不会通知它重读 PTY 尺寸。
+            os.killpg(terminal["process"].pid, signal.SIGWINCH)
+            # 仅调整浏览器 PTY 时，tmux 可能继续沿用初始的 25 行窗口。
+            # 显式调整会话窗口，确保前端输入的列数、行数真正生效。
+            subprocess.run(["tmux", "resize-window", "-t", terminal["session_name"], "-x", str(cols), "-y", str(rows)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, ValueError): pass
+@socketio.on("disconnect")
+def terminal_disconnect(): close_terminal_connection(request.sid)
 def init():
     with closing(db()) as c:
         c.executescript(SCHEMA)
@@ -377,10 +585,11 @@ def init():
             "venv_path": "ALTER TABLE projects ADD COLUMN venv_path TEXT DEFAULT '.venv'",
             "requirements_file": "ALTER TABLE projects ADD COLUMN requirements_file TEXT DEFAULT 'requirements.txt'",
             "auto_install_dependencies": "ALTER TABLE projects ADD COLUMN auto_install_dependencies INTEGER NOT NULL DEFAULT 1",
+            "node_version": "ALTER TABLE projects ADD COLUMN node_version TEXT DEFAULT ''",
         }
         for column, statement in migrations.items():
             if column not in columns: c.execute(statement)
         c.commit()
 init()
 if __name__ == "__main__":
-    threading.Thread(target=monitor,daemon=True).start(); app.run(host="0.0.0.0",port=int(os.environ.get("PORT",8080)),debug=False)
+    threading.Thread(target=monitor,daemon=True).start(); socketio.run(app, host="0.0.0.0", port=int(os.environ.get("PORT",22993)), debug=False)

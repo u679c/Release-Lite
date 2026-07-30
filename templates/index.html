@@ -6,6 +6,7 @@
     <title>Release Lite</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+    <link href="/static/vendor/xterm/xterm.css?v=5.3.0" rel="stylesheet" />
     <link rel="stylesheet" href="/static/style.css" />
   </head>
   <body>
@@ -29,6 +30,9 @@
           </button>
           <button class="nav-link" data-page="operations" onclick="showPage('operations')">
             <span><i class="bi bi-clock-history"></i></span> 操作记录
+          </button>
+          <button class="nav-link" data-page="tmux" onclick="showPage('tmux')">
+            <span><i class="bi bi-terminal"></i></span> Tmux 管理
           </button>
         </nav>
         <div class="sidebar-footer"><span class="online-dot"></span> 面板服务运行中</div>
@@ -60,7 +64,7 @@
             </section>
           </section>
           <section class="page-view" id="projects-page">
-            <div class="section-heading page-heading"><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
+            <div class="section-heading page-heading project-page-heading"><div class="project-filters" role="search"><input id="projectNameFilter" class="form-control" type="search" placeholder="搜索项目名称" aria-label="搜索项目名称" oninput="filterProjects()"><select id="projectRuntimeFilter" class="form-select" aria-label="按项目类型筛选" onchange="filterProjects()"><option value="">全部类型</option><option value="python">Python</option><option value="node">Node.js</option><option value="generic">通用</option></select></div><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
             <section class="content-card project-table-card">
               <div class="table-responsive">
                 <table class="table align-middle project-table mb-0">
@@ -83,6 +87,10 @@
             <div class="section-heading page-heading"><button class="btn btn-outline-secondary btn-sm" onclick="refresh()">刷新</button></div>
             <section class="content-card operation-card"><div id="operations"></div></section>
           </section>
+          <section class="page-view" id="tmux-page">
+            <div class="section-heading page-heading"><div><h2>Tmux 会话</h2><p class="muted mb-0">管理由 Release Lite 创建的项目终端会话。</p></div><button class="btn btn-outline-secondary btn-sm" onclick="loadTmuxSessions()"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>
+            <section class="tmux-grid" id="tmuxSessions"></section>
+          </section>
           <section class="page-view" id="detail-page">
             <section class="content-card detail-page-card"><div id="details"></div></section>
           </section>
@@ -91,6 +99,9 @@
   </div>
   <dialog id="directoryDialog" class="directory-dialog"><section><header><h2>选择服务器目录</h2><button aria-label="关闭" onclick="$('#directoryDialog').close()">×</button></header><div id="directoryPicker"></div></section></dialog>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/vendor/socket.io/socket.io.min.js?v=4.7.5"></script>
+  <script src="/static/vendor/xterm/xterm.min.js?v=5.3.0"></script>
+  <script src="/static/vendor/xterm/xterm-addon-fit.min.js?v=0.8.0"></script>
+  <script src="/static/app.js?v=terminal-v3"></script>
   </body>
 </html>
