@@ -5,7 +5,6 @@
 <img width="1650" height="1002" alt="image" src="https://github.com/user-attachments/assets/50722143-3aa1-497c-b20d-13c7cdedc7c0" />
 <img width="1640" height="986" alt="image" src="https://github.com/user-attachments/assets/0a812b52-2141-4ffb-8a43-0e55a8749a38" />
 <img width="1635" height="1006" alt="image" src="https://github.com/user-attachments/assets/60bb0bfa-a36f-4825-a1b4-a0cfde8e7707" />
-<img width="1620" height="770" alt="image" src="https://github.com/user-attachments/assets/378df5f8-6b33-46e5-b7be-8575154e544a" />
 
 ## 安装与启动
 
