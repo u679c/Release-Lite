@@ -103,6 +103,31 @@ body {
 .sidebar .nav-link.active span {
   color: #8ab5ff;
 }
+.more-menu-toggle {
+  display: flex;
+  align-items: center;
+}
+.more-menu-arrow {
+  margin-left: auto;
+  font-size: 11px;
+  transition: transform 0.16s ease;
+}
+.more-menu-toggle.open .more-menu-arrow {
+  transform: rotate(180deg);
+}
+.sidebar-submenu {
+  display: grid;
+  gap: 3px;
+  margin: -2px 0 3px;
+  padding-left: 12px;
+}
+.sidebar-submenu .nav-link {
+  padding: 8px 12px;
+  font-size: 13px;
+}
+.sidebar-submenu .nav-link span {
+  font-size: 15px;
+}
 .sidebar-footer {
   font-size: 12px;
   color: #8d9bad;
@@ -655,6 +680,70 @@ a {
 .detail-page-card {
   margin-top: 0 !important;
 }
+.storage-card {
+  padding: 0;
+  overflow: hidden;
+}
+.storage-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.storage-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.storage-filters label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.storage-filters .form-select {
+  width: auto;
+  min-width: 132px;
+  margin: 0;
+}
+.storage-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+}
+.storage-sort-icon {
+  display: inline-grid;
+  margin-top: -2px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 7px;
+}
+.storage-sort-icon i { height: 7px; opacity: .38; }
+.storage-sort-icon i.active { color: var(--blue); opacity: 1; }
+.storage-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+.storage-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.storage-pagination > div { display: flex; gap: 8px; }
 .detail-topline {
   display: flex;
   justify-content: space-between;
@@ -890,11 +979,13 @@ a {
 }
 .toast-container {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  top: 24px;
+  left: 50%;
   z-index: 2000;
   display: grid;
   gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+  transform: translateX(-50%);
 }
 .toast-message {
   max-width: 360px;

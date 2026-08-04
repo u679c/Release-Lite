@@ -3,6 +3,7 @@ import hmac
 import json
 import os
 import pty
+import re
 import secrets
 import shlex
 import shutil
@@ -72,6 +73,7 @@ CREATE TABLE IF NOT EXISTS operation_logs (
 
 
 def now(): return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+def log_now(): return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 def server_ip():
     # 优先取默认路由对应的网卡地址，而不是 hostname 解析出的回环地址。
     try:
@@ -187,17 +189,39 @@ def allowed_browse_path(path):
 def log_file(project_id, deployment_id): return LOG_DIR / f"project-{project_id}-deployment-{deployment_id}.log"
 def project_log_path(project_id, kind):
     if kind == "runtime": return LOG_DIR / f"project-{project_id}-runtime.log"
+    if kind == "dependencies": return LOG_DIR / f"project-{project_id}-dependencies.log"
     if kind == "deploy":
         latest = one("SELECT log_path FROM deployments WHERE project_id=? ORDER BY id DESC LIMIT 1", (project_id,))
         return Path(latest["log_path"]) if latest and latest.get("log_path") else LOG_DIR / f"project-{project_id}-no-deploy.log"
     abort(404)
+def managed_log_entries(project_id=None, kind=None, sort="size_desc"):
+    projects = {item["id"]: item["name"] for item in rows("SELECT id,name FROM projects")}
+    entries = []
+    pattern = re.compile(r"^project-(\d+)-(runtime|dependencies|deployment-\d+)\.log$")
+    labels = {"runtime": "运行日志", "dependencies": "依赖更新日志", "deploy": "代码更新日志"}
+    for path in LOG_DIR.glob("project-*.log"):
+        match = pattern.match(path.name)
+        if not match:
+            continue
+        pid = int(match.group(1)); raw_kind = match.group(2); log_kind = "deploy" if raw_kind.startswith("deployment-") else raw_kind
+        if project_id is not None and pid != project_id:
+            continue
+        if kind and log_kind != kind:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        entries.append({"name": path.name, "project_id": pid, "project_name": projects.get(pid, f"已删除项目 #{pid}"), "kind": log_kind, "kind_label": labels[log_kind], "size": stat.st_size, "updated_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(timespec="seconds")})
+    entries.sort(key=lambda item: item["size"], reverse=sort != "size_asc")
+    return entries
 def append_log(path, text):
     with open(path, "a", encoding="utf-8") as f: f.write(text)
 def run_command(command, cwd, env, logfile, title):
     append_log(logfile, f"\n$ {title}: {command}\n")
     p = subprocess.Popen(command, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     assert p.stdout
-    for line in iter(p.stdout.readline, ""): append_log(logfile, line)
+    for line in iter(p.stdout.readline, ""): append_log(logfile, f"[{log_now()}] {line}")
     p.wait()
     if p.returncode: raise RuntimeError(f"{title} 失败，退出码 {p.returncode}")
 def git(cwd, args, logfile):
@@ -260,7 +284,7 @@ def start_project(project, operator="web", subproject=None):
         command = command.replace("{{project}}", selected_subproject)
     env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"]); env = apply_runtime_env(project, root, env)
     runtime_log = LOG_DIR / f"project-{project['id']}-runtime.log"
-    append_log(runtime_log, f"\n--- start {now()} ---\n$ {command}\n")
+    append_log(runtime_log, f"\n--- start {log_now()} ---\n$ {command}\n")
     _, pid = launch_project_terminal(project, root, env, runtime_log, command)
     write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,subproject,updated_at) VALUES(?,?,?,?,1,?,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,subproject=excluded.subproject,updated_at=excluded.updated_at", (project["id"], pid, now(), command, selected_subproject, now()))
     audit(project["id"], "启动", f"PID {pid}", operator); return pid
@@ -287,7 +311,7 @@ def deploy_worker(project_id, deployment_id, revision=None):
     env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env = apply_runtime_env(project, root, env)
     try:
         if not project["is_git"]: raise RuntimeError("非 Git 项目不支持更新代码")
-        append_log(logfile, f"代码更新开始：{now()}\n")
+        append_log(logfile, f"代码更新开始：{log_now()}\n")
         if not (root / ".git").exists(): raise RuntimeError("项目目录不是 Git 仓库")
         if revision:
             git(root, "fetch --all --tags", logfile); git(root, f"checkout --detach {shlex.quote(revision)}", logfile)
@@ -316,14 +340,14 @@ def queue_deploy(project, operator="web", revision=None, action="deploy"):
         t = threading.Thread(target=deploy_worker, args=(project["id"], did, revision), daemon=True); deploy_locks[project["id"]] = t; t.start(); return did
 def update_node_dependencies_worker(project_id):
     project = project_or_404(project_id)
-    logfile = LOG_DIR / f"project-{project_id}-runtime.log"
+    logfile = project_log_path(project_id, "dependencies")
     try:
         if project.get("runtime") != "node": raise RuntimeError("仅 Node.js 项目支持更新依赖")
         command = (project.get("node_dependency_command") or "").strip()
         if not command: raise RuntimeError("请先填写更新依赖命令")
         root = safe_project_path(project)
         env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env = apply_runtime_env(project, root, env)
-        append_log(logfile, f"\n--- update dependencies {now()} ---\n")
+        append_log(logfile, f"\n--- update dependencies {log_now()} ---\n")
         run_command(command, root, env, logfile, "更新 Node.js 依赖")
         audit(project_id, "更新依赖成功", command, "dependencies")
     except Exception as exc:
@@ -440,14 +464,48 @@ def logs(project_id,kind):
 @app.get("/api/projects/<int:project_id>/logs/summary")
 def log_summary(project_id):
     project_or_404(project_id)
-    runtime, deploy = project_log_path(project_id, "runtime"), project_log_path(project_id, "deploy")
-    return jsonify({"runtime_size": runtime.stat().st_size if runtime.exists() else 0, "deploy_size": deploy.stat().st_size if deploy.exists() else 0})
+    runtime, deploy, dependencies = project_log_path(project_id, "runtime"), project_log_path(project_id, "deploy"), project_log_path(project_id, "dependencies")
+    return jsonify({"runtime_size": runtime.stat().st_size if runtime.exists() else 0, "deploy_size": deploy.stat().st_size if deploy.exists() else 0, "dependencies_size": dependencies.stat().st_size if dependencies.exists() else 0})
+@app.get("/api/storage/logs")
+def storage_logs():
+    project_id = request.args.get("project_id", type=int)
+    kind = request.args.get("kind") or ""
+    if kind not in {"", "runtime", "deploy", "dependencies"}: return jsonify(error="不支持的日志类型"), 400
+    sort = request.args.get("sort") or "size_desc"
+    if sort not in {"size_desc", "size_asc"}: return jsonify(error="不支持的排序方式"), 400
+    page = request.args.get("page", 1, type=int)
+    page_size = request.args.get("page_size", 20, type=int)
+    if page < 1 or page_size < 1 or page_size > 100: return jsonify(error="分页参数不合法"), 400
+    entries = managed_log_entries(project_id, kind, sort)
+    page = min(page, max(1, (len(entries) + page_size - 1) // page_size))
+    start = (page - 1) * page_size
+    return jsonify({"items": entries[start:start + page_size], "total": len(entries), "page": page, "page_size": page_size})
+@app.post("/api/storage/logs/delete")
+def delete_storage_logs():
+    data = request.get_json(force=True)
+    names = data.get("names") or []
+    if not isinstance(names, list) or not names: return jsonify(error="请至少选择一个日志文件"), 400
+    entries = {item["name"]: item for item in managed_log_entries()}
+    deleted = []
+    for name in names:
+        if not isinstance(name, str) or name not in entries:
+            continue
+        path = LOG_DIR / name
+        try:
+            path.unlink()
+            deleted.append(entries[name])
+        except OSError as exc:
+            return jsonify(error=f"删除日志失败：{exc}"), 400
+    if not deleted: return jsonify(error="没有可删除的日志文件"), 400
+    for item in deleted: audit(item["project_id"], "删除日志文件", item["name"])
+    return jsonify(deleted=len(deleted))
 @app.post("/api/projects/<int:project_id>/logs/<kind>/clear")
 def clear_log(project_id, kind):
     project_or_404(project_id); path = project_log_path(project_id, kind)
     if path.exists():
         with open(path, "w", encoding="utf-8"): pass
-    audit(project_id, f"清除{'运行' if kind == 'runtime' else '代码更新'}日志", str(path))
+    labels = {"runtime": "运行", "deploy": "代码更新", "dependencies": "依赖更新"}
+    audit(project_id, f"清除{labels[kind]}日志", str(path))
     return jsonify(ok=True)
 @app.get("/api/projects/<int:project_id>/deployments")
 def deployments(project_id): return jsonify(rows("SELECT * FROM deployments WHERE project_id=? ORDER BY id DESC LIMIT 50",(project_id,)))
@@ -498,7 +556,7 @@ def launch_project_terminal(project, root, env, logfile, command):
     shell_command = f"{exports}exec {command}"
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
     try:
-        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"cat >> {shlex.quote(str(logfile))}"], check=True)
+        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"awk '{{ print strftime(\"[%Y-%m-%d %H:%M:%S]\"), $0; fflush(); }}' >> {shlex.quote(str(logfile))}"], check=True)
         for _ in range(10):
             result = subprocess.run(["tmux", "display-message", "-p", "-t", name, "#{pane_pid}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             if result.returncode == 0 and result.stdout.strip().isdigit():

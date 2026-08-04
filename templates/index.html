@@ -32,9 +32,11 @@
           <button class="nav-link" data-page="operations" onclick="showPage('operations')">
             <span><i class="bi bi-clock-history"></i></span> 操作记录
           </button>
-          <button class="nav-link" data-page="tmux" onclick="showPage('tmux')">
-            <span><i class="bi bi-terminal"></i></span> Tmux 管理
-          </button>
+          <button class="nav-link more-menu-toggle" type="button" onclick="toggleMoreMenu()"><span><i class="bi bi-three-dots"></i></span> 更多 <i class="bi bi-chevron-down more-menu-arrow"></i></button>
+          <div id="moreMenu" class="sidebar-submenu" hidden>
+            <button class="nav-link" data-page="tmux" onclick="showPage('tmux')"><span><i class="bi bi-terminal"></i></span> Tmux 管理</button>
+            <button class="nav-link" data-page="storage" onclick="showPage('storage')"><span><i class="bi bi-device-hdd"></i></span> 日志管理</button>
+          </div>
         </nav>
         <div class="sidebar-footer"><span class="online-dot"></span> 面板服务运行中</div>
       </aside>
@@ -91,6 +93,9 @@
           <section class="page-view" id="tmux-page">
             <div class="section-heading page-heading"><div><h2>Tmux 会话</h2><p class="muted mb-0">管理由 Release Lite 创建的项目终端会话。</p></div><button class="btn btn-outline-secondary btn-sm" onclick="loadTmuxSessions()"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>
             <section class="tmux-grid" id="tmuxSessions"></section>
+          </section>
+          <section class="page-view" id="storage-page">
+            <section class="content-card storage-card"><div class="storage-toolbar"><div class="storage-filters"><label>项目：<select id="storageProjectFilter" class="form-select" aria-label="按项目筛选日志" onchange="resetStorageLogPage()"><option value="">全部项目</option></select></label><label>日志类型：<select id="storageTypeFilter" class="form-select" aria-label="按日志类型筛选" onchange="resetStorageLogPage()"><option value="">全部日志类型</option><option value="runtime">运行日志</option><option value="deploy">代码更新日志</option><option value="dependencies">依赖更新日志</option></select></label></div><div class="storage-actions"><button class="btn btn-outline-secondary btn-sm" onclick="loadStorageLogs()">刷新</button><button id="deleteStorageLogsButton" class="btn btn-outline-danger btn-sm" type="button" onclick="deleteSelectedStorageLogs()" disabled>删除选中</button><button class="btn btn-outline-secondary btn-sm" type="button" onclick="resetStorageFilters()">重置</button></div></div><div class="table-responsive"><table class="table align-middle project-table mb-0"><thead><tr><th><input id="storageSelectAll" type="checkbox" aria-label="全选日志" onchange="toggleAllStorageLogs(this.checked)"></th><th>项目</th><th>日志类型</th><th><button class="storage-sort-button" type="button" onclick="toggleStorageSizeSort()">大小 <span class="storage-sort-icon"><i class="bi bi-chevron-up" data-direction="asc"></i><i class="bi bi-chevron-down" data-direction="desc"></i></span></button></th><th>更新时间</th><th>文件名</th></tr></thead><tbody id="storageLogs"></tbody></table></div><div class="storage-pagination"><span id="storagePaginationInfo"></span><div id="storagePagination"></div></div></section>
           </section>
           <section class="page-view" id="detail-page">
             <section class="content-card detail-page-card"><div id="details"></div></section>

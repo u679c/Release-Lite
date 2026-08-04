@@ -1,6 +1,9 @@
 let projectList = [];
 let serverInfo = {};
 let tmuxSessions = [];
+let storageLogEntries = [];
+let storageSort = "size_desc";
+let storagePage = 1;
 let terminal = null;
 let terminalSocket = null;
 let terminalFitAddon = null;
@@ -52,8 +55,14 @@ function activatePage(page) {
   if (page !== "detail") closeTerminal();
   document.querySelectorAll(".page-view").forEach((x) => x.classList.toggle("active", x.id === page + "-page"));
   document.querySelectorAll("[data-page]").forEach((x) => x.classList.toggle("active", x.dataset.page === page));
+  if (["tmux", "storage"].includes(page)) {
+    const menu = $("#moreMenu");
+    if (menu) menu.hidden = false;
+    $(".more-menu-toggle")?.classList.add("open");
+  }
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (page === "tmux") setTimeout(loadTmuxSessions, 0);
+  if (page === "storage") setTimeout(loadStorageLogs, 0);
 }
 function navigate(route) {
   const hash = "#/" + route;
@@ -63,10 +72,16 @@ function navigate(route) {
 function showPage(page) {
   navigate(page);
 }
+function toggleMoreMenu() {
+  const menu = $("#moreMenu");
+  if (!menu) return;
+  menu.hidden = !menu.hidden;
+  $(".more-menu-toggle")?.classList.toggle("open", !menu.hidden);
+}
 async function applyRoute() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   const page = parts[0] || "overview";
-  if (page !== "detail") return activatePage(["overview", "projects", "operations", "tmux"].includes(page) ? page : "overview");
+  if (page !== "detail") return activatePage(["overview", "projects", "operations", "tmux", "storage"].includes(page) ? page : "overview");
   const id = parts[1];
   const tab = ["info", "config", "logs", "terminal"].includes(parts[2]) ? parts[2] : "info";
   if (id === "new") return openEditor(null, true);
@@ -171,6 +186,84 @@ async function closeTmuxSession(name) {
     await api(`/api/tmux/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
     toast("终端会话已关闭");
     await loadTmuxSessions();
+  } catch (e) {
+    toast(e.message, "error");
+  }
+}
+function updateStorageDeleteButton() {
+  const selected = document.querySelectorAll(".storage-log-select:checked").length;
+  const button = $("#deleteStorageLogsButton");
+  if (button) {
+    button.disabled = !selected;
+    button.textContent = selected ? `删除选中（${selected}）` : "删除选中";
+  }
+}
+function toggleAllStorageLogs(checked) {
+  document.querySelectorAll(".storage-log-select").forEach((item) => (item.checked = checked));
+  updateStorageDeleteButton();
+}
+function toggleStorageLogSelection() {
+  const checks = [...document.querySelectorAll(".storage-log-select")];
+  const selectAll = $("#storageSelectAll");
+  if (selectAll) selectAll.checked = checks.length > 0 && checks.every((item) => item.checked);
+  updateStorageDeleteButton();
+}
+function resetStorageFilters() {
+  $("#storageProjectFilter").value = "";
+  $("#storageTypeFilter").value = "";
+  storageSort = "size_desc";
+  storagePage = 1;
+  loadStorageLogs();
+}
+function resetStorageLogPage() {
+  storagePage = 1;
+  loadStorageLogs();
+}
+function toggleStorageSizeSort() {
+  storageSort = storageSort === "size_desc" ? "size_asc" : "size_desc";
+  storagePage = 1;
+  loadStorageLogs();
+}
+function setStoragePage(page) {
+  storagePage = page;
+  loadStorageLogs();
+}
+async function loadStorageLogs() {
+  const target = $("#storageLogs");
+  const projectFilter = $("#storageProjectFilter");
+  if (!target || !projectFilter) return;
+  const selectedProject = projectFilter.value;
+  projectFilter.innerHTML = `<option value="">全部项目</option>${projectList.map((project) => `<option value="${project.id}">${esc(project.name)}</option>`).join("")}`;
+  projectFilter.value = selectedProject;
+  const kind = $("#storageTypeFilter")?.value || "";
+  const params = new URLSearchParams({ kind, sort: storageSort, page: storagePage, page_size: 20 });
+  if (projectFilter.value) params.set("project_id", projectFilter.value);
+  try {
+    const result = await api(`/api/storage/logs?${params}`);
+    storageLogEntries = result.items;
+    storagePage = result.page;
+    target.innerHTML = storageLogEntries.length
+      ? storageLogEntries.map((item) => `<tr><td><input class="storage-log-select" type="checkbox" value="${esc(item.name)}" aria-label="选择 ${esc(item.name)}" onchange="toggleStorageLogSelection()"></td><td>${esc(item.project_name)}</td><td>${esc(item.kind_label)}</td><td>${fileSize(item.size)}</td><td>${esc(item.updated_at)}</td><td class="mono">${esc(item.name)}</td></tr>`).join("")
+      : '<tr><td colspan="6" class="empty-row">没有符合筛选条件的日志文件</td></tr>';
+    const selectAll = $("#storageSelectAll");
+    if (selectAll) selectAll.checked = false;
+    document.querySelectorAll(".storage-sort-icon i").forEach((icon) => icon.classList.toggle("active", icon.dataset.direction === (storageSort === "size_asc" ? "asc" : "desc")));
+    const totalPages = Math.max(1, Math.ceil(result.total / result.page_size));
+    $("#storagePaginationInfo").textContent = `共 ${result.total} 条，第 ${result.page} / ${totalPages} 页`;
+    $("#storagePagination").innerHTML = `<button class="btn btn-outline-secondary btn-sm" type="button" onclick="setStoragePage(${result.page - 1})" ${result.page <= 1 ? "disabled" : ""}>上一页</button><button class="btn btn-outline-secondary btn-sm" type="button" onclick="setStoragePage(${result.page + 1})" ${result.page >= totalPages ? "disabled" : ""}>下一页</button>`;
+    updateStorageDeleteButton();
+  } catch (e) {
+    target.innerHTML = `<tr><td colspan="6" class="empty-row text-danger">${esc(e.message)}</td></tr>`;
+  }
+}
+async function deleteSelectedStorageLogs() {
+  const names = [...document.querySelectorAll(".storage-log-select:checked")].map((item) => item.value);
+  if (!names.length) return;
+  if (!confirm(`确认删除选中的 ${names.length} 个日志文件吗？此操作不可恢复。`)) return;
+  try {
+    const result = await api("/api/storage/logs/delete", { method: "POST", body: JSON.stringify({ names }) });
+    toast(`已删除 ${result.deleted} 个日志文件`);
+    await loadStorageLogs();
   } catch (e) {
     toast(e.message, "error");
   }
@@ -374,7 +467,7 @@ function openEditor(id, fromRoute = false) {
     "config",
     "",
     [],
-    { runtime_size: 0, deploy_size: 0 },
+    { runtime_size: 0, deploy_size: 0, dependencies_size: 0 },
     true,
   );
   activatePage("detail");
@@ -409,7 +502,8 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   const subprojectInfo = hasSubprojects ? `<div><small>当前子项目</small><b>${esc(selectedSubproject?.display || x.subproject || "-")}</b></div>` : "";
   const info = `${runActions}<div class="detail-overview"><div><small>项目名称</small><b>${esc(p.name || "未命名项目")}</b></div><div><small>运行状态</small>${status(p)}</div>${subprojectInfo}<div><small>运行环境</small><b>${runtimeLabel(p.runtime, p.node_version)}</b></div>${gitInfo}<div><small>项目目录</small><b class="mono">${esc(p.root_path || "-")}</b></div><div><small>运行进程</small><b>PID ${x.pid || "-"} · CPU ${x.cpu || 0}% · ${bytes(x.memory)}</b></div><div><small>监听端口</small><b>${x.ports?.join(", ") || "-"}</b></div><div class="service-addresses"><small>服务地址</small>${accessLinks(x.ports || [])}</div></div>${p.is_git ? `<h3>代码更新历史</h3>${history}` : ""}`;
   const webhook = p.id ? `${location.origin}/webhook/${p.id}/${p.webhook_secret}` : "保存项目后自动生成";
-  const logs = `${p.is_git ? `<p class="muted">Webhook 地址（请妥善保管）</p><div class="log">${esc(webhook)}</div>` : ""}<div class="log-toolbar"><span id="activeLogMeta">运行日志 · ${fileSize(logSummary.runtime_size)}</span><button id="clearLogButton" class="icon-button danger" title="清空运行日志" aria-label="清空运行日志" onclick="clearLog('runtime')"><i class="bi bi-trash3"></i></button></div><div class="tabs"><button onclick="showLog('runtime', ${logSummary.runtime_size})">运行日志</button>${p.is_git ? `<button onclick="showLog('deploy', ${logSummary.deploy_size})">代码更新日志</button>` : ""}</div><pre class="log" id="log">${esc(runtime || "暂无运行日志")}</pre>`;
+  const hasDependencyLog = p.runtime === "node" && String(p.node_dependency_command || "").trim();
+  const logs = `${p.is_git ? `<p class="muted">Webhook 地址（请妥善保管）</p><div class="log">${esc(webhook)}</div>` : ""}<div class="log-toolbar"><span id="activeLogMeta">运行日志 · ${fileSize(logSummary.runtime_size)}</span><button id="clearLogButton" class="icon-button danger" title="清空运行日志" aria-label="清空运行日志" onclick="clearLog('runtime')"><i class="bi bi-trash3"></i></button></div><div class="tabs"><button onclick="showLog('runtime', ${logSummary.runtime_size})">运行日志</button>${p.is_git ? `<button onclick="showLog('deploy', ${logSummary.deploy_size})">代码更新日志</button>` : ""}${hasDependencyLog ? `<button onclick="showLog('dependencies', ${logSummary.dependencies_size || 0})">依赖更新日志</button>` : ""}</div><pre class="log" id="log">${esc(runtime || "暂无运行日志")}</pre>`;
   const terminal =
     !isNew && x.running
       ? `<div class="terminal-toolbar"><span class="muted">tmux 分屏：<code>Ctrl-b</code> 后按 <code>%</code>（纵向）或 <code>"</code>（横向）</span><div class="terminal-display-controls"><span>字号</span><button class="icon-button" title="缩小字号" onclick="adjustTerminalFont(-1)"><i class="bi bi-dash-lg"></i></button><input id="terminalFontSize" class="terminal-number-input" type="number" min="1" value="${terminalFontSize}" onchange="setTerminalFont(this.value)"><button class="icon-button" title="放大字号" onclick="adjustTerminalFont(1)"><i class="bi bi-plus-lg"></i></button><span class="terminal-control-divider"></span><span>终端尺寸</span><button class="icon-button" title="缩窄窗口" onclick="adjustTerminalWindow(-10,0)"><i class="bi bi-arrows-collapse-horizontal"></i></button><input id="terminalColumns" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_COLUMNS}" placeholder="列" onchange="setTerminalWindow()"><span>×</span><input id="terminalRows" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_ROWS}" placeholder="行" onchange="setTerminalWindow()"><button class="icon-button" title="加宽窗口" onclick="adjustTerminalWindow(10,0)"><i class="bi bi-arrows-expand-horizontal"></i></button><button class="icon-button" title="降低窗口" onclick="adjustTerminalWindow(0,-5)"><i class="bi bi-arrows-collapse-vertical"></i></button><button class="icon-button" title="加高窗口" onclick="adjustTerminalWindow(0,5)"><i class="bi bi-arrows-expand-vertical"></i></button><button class="action-link terminal-auto-size" onclick="resetTerminalWindow()">填满面板</button></div></div><section class="terminal-card"><div id="terminalScreen"></div></section>`
@@ -619,7 +713,7 @@ async function showLog(kind, size = 0) {
   const id = $("#id")?.value;
   if (!id) return;
   $("#log").textContent = (await api(`/api/projects/${id}/logs/${kind}`)).text;
-  const label = kind === "deploy" ? "代码更新日志" : "运行日志";
+  const label = { runtime: "运行日志", deploy: "代码更新日志", dependencies: "依赖更新日志" }[kind] || "日志";
   $("#activeLogMeta").textContent = `${label} · ${fileSize(size)}`;
   const clear = $("#clearLogButton");
   clear.title = `清空${label}`;
@@ -629,7 +723,7 @@ async function showLog(kind, size = 0) {
 async function clearLog(kind) {
   const id = $("#id")?.value;
   if (!id) return;
-  const label = kind === "deploy" ? "代码更新日志" : "运行日志";
+  const label = { runtime: "运行日志", deploy: "代码更新日志", dependencies: "依赖更新日志" }[kind] || "日志";
   if (!confirm(`确认清空${label}吗？此操作不可恢复。`)) return;
   try {
     await api(`/api/projects/${id}/logs/${kind}/clear`, { method: "POST" });
