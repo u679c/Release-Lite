@@ -202,10 +202,19 @@ body {
 .page-heading {
   margin-bottom: 24px;
 }
-.project-page-heading { align-items: center; }
-.project-filters { display: flex; gap: 10px; }
-.project-filters .form-control { width: min(260px, 42vw); }
-.project-filters .form-select { width: 130px; }
+.project-page-heading {
+  align-items: center;
+}
+.project-filters {
+  display: flex;
+  gap: 10px;
+}
+.project-filters .form-control {
+  width: min(260px, 42vw);
+}
+.project-filters .form-select {
+  width: 130px;
+}
 .system-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -241,7 +250,10 @@ body {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
-  transition: border-color .15s, box-shadow .15s, transform .15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s,
+    transform 0.15s;
 }
 .summary-item:hover {
   border-color: #b9d0ff;
@@ -395,7 +407,6 @@ dialog {
 dialog::backdrop {
   background: #10182880;
 }
-form,
 dialog section {
   padding: 24px;
   overflow: auto;
@@ -529,8 +540,14 @@ a {
   }
 }
 @media (max-width: 640px) {
-  .project-page-heading { align-items: stretch; flex-direction: column; }
-  .project-filters .form-control, .project-filters .form-select { width: 100%; }
+  .project-page-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .project-filters .form-control,
+  .project-filters .form-select {
+    width: 100%;
+  }
   .topbar,
   .content-area {
     padding-left: 18px;
@@ -635,75 +652,429 @@ a {
   padding: 42px !important;
 }
 
-.detail-page-card { margin-top: 0 !important; }
-.detail-topline { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-.detail-topline b { font-size: 16px; }
-.detail-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin: 0 -23px 24px; padding: 0 23px; }
-.detail-tab { border: 0 !important; border-radius: 0 !important; background: transparent !important; padding: 0 1px 12px !important; color: var(--muted) !important; font-weight: 500; }
-.detail-tab.active { color: var(--blue) !important; border-bottom: 2px solid var(--blue) !important; font-weight: 650; }
-.detail-panel { display: none; }
-.detail-panel.active { display: block; }
-.detail-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px 24px; margin-bottom: 30px; }
-.runtime-actions { display: flex; align-items: center; justify-content: space-between; margin: 0 0 20px; }
-.runtime-actions-left { display: flex; gap: 8px; }
-.runtime-actions-left.has-subprojects { align-items: center; gap: 6px; }
-.subproject-picker { width: min(360px, 38vw); min-width: 180px; }
-.detail-overview div { display: flex; flex-direction: column; gap: 6px; }
-.detail-overview small { color: var(--muted); }
-.detail-overview b { font-size: 13px; word-break: break-word; }
-.service-addresses { grid-column: 1 / -1; }
-.access-links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 5px; }
-.access-links a { font-size: 12px; font-weight: 500; }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px !important; }
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.config-form { max-width: 900px; }
-.check-row { display: flex; gap: 28px; margin: 16px 0; }
-.non-git-mode { margin: 0 0 16px; }
-.runtime-config { margin: 18px 0; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fafbfc; }
-.runtime-config h3 { margin: 0 0 14px; font-size: 14px; }
-.runtime-config .check { margin: 14px 0 0; }
-.directory-browse-button { margin: -4px 0 14px; }
-#directoryPicker { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fafbfc; }
-.directory-picker-title { font-weight: 600; margin-bottom: 10px; }
-.directory-roots, .directory-nav-row { display: flex; flex-wrap: wrap; gap: 7px; }
-.directory-root, .directory-nav { padding: 5px 8px; font-size: 12px; }
-.directory-picker-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
-.directory-picker-head code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
-.directory-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 5px; margin-top: 10px; max-height: 220px; overflow: auto; }
-.directory-item { border: 0; background: transparent; text-align: left; padding: 6px; color: #344054; font-weight: 400; }
-.directory-item:hover { background: #edf4ff; color: var(--blue); }
-.directory-dialog { width: min(720px, 96vw); }
-.directory-dialog section { padding: 22px; }
-.toast-container { position: fixed; right: 24px; bottom: 24px; z-index: 2000; display: grid; gap: 8px; }
-.toast-message { max-width: 360px; padding: 11px 14px; border-radius: 8px; background: #344054; color: #fff; box-shadow: 0 8px 20px #10182826; opacity: 0; transform: translateY(8px); transition: opacity .18s, transform .18s; }
-.toast-message.visible { opacity: 1; transform: translateY(0); }
-.toast-message.error { background: #b42318; }
-.terminal-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 0 0 12px; }
-.terminal-display-controls { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.terminal-display-controls .icon-button { width: 26px; height: 26px; color: var(--ink); }
-.terminal-number-input { width: 48px; min-width: 0; height: 26px; margin: 0; padding: 2px 4px; font-size: 12px; text-align: center; }
-.terminal-dimension-input { width: 54px; }
-.terminal-control-divider { width: 1px; height: 18px; margin: 0 5px; background: var(--line); }
-.terminal-auto-size { margin-left: 3px; font-size: 12px; }
-.terminal-card { height: calc(100vh - 205px); min-height: 560px; background: #101828; border-radius: 10px; overflow: hidden; padding: 14px; }
-#terminalScreen { width: 100%; height: 100%; }
-#terminalScreen .xterm-viewport { overflow-y: scroll !important; scrollbar-color: #667085 #101828; }
-#terminalScreen .xterm-viewport::-webkit-scrollbar { width: 10px; }
-#terminalScreen .xterm-viewport::-webkit-scrollbar-thumb { background: #475467; border-radius: 8px; }
-.tmux-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-.tmux-card { border: 1px solid var(--line); border-radius: 9px; background: #fff; padding: 17px; }
-.tmux-card-head, .tmux-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.tmux-card-head b, .tmux-card-head small { display: block; }
-.tmux-card-head small { margin-top: 4px; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.tmux-meta { display: grid; gap: 8px; margin: 17px 0; color: var(--muted); font-size: 12px; }
-.tmux-meta i { margin-right: 5px; }
-.tmux-empty { grid-column: 1 / -1; text-align: center; padding: 44px 20px; color: var(--muted); }
-.tmux-empty i { display: block; margin-bottom: 10px; font-size: 28px; }
-.tmux-empty p { margin: 0 0 5px; color: var(--ink); font-weight: 600; }
-@media (max-width: 640px) { .terminal-toolbar { align-items: flex-start; flex-direction: column; } .terminal-display-controls { flex-wrap: wrap; white-space: normal; } .terminal-card { height: calc(100vh - 210px); min-height: 460px; padding: 10px; } }
-.config-form footer { border-top: 1px solid var(--line); padding-top: 18px; }
-.detail-panel h3 { font-size: 15px; margin: 25px 0 10px; }
-@media (max-width: 640px) { .detail-overview, .form-grid { grid-template-columns: 1fr; } .check-row { flex-direction: column; gap: 6px; } .detail-tabs { gap: 18px; } }
+.detail-page-card {
+  margin-top: 0 !important;
+}
+.detail-topline {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.detail-topline b {
+  font-size: 16px;
+}
+.detail-topline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-topline-actions .icon-button {
+  width: 31px;
+  height: 31px;
+  border: 1px solid currentColor !important;
+}
+.detail-tabs {
+  display: flex;
+  gap: 26px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 -23px 24px;
+  padding: 0 23px;
+}
+.detail-tab {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 1px 12px !important;
+  color: var(--muted) !important;
+  font-weight: 500;
+}
+.detail-tab.active {
+  color: var(--blue) !important;
+  border-bottom: 2px solid var(--blue) !important;
+  font-weight: 650;
+}
+.detail-panel {
+  display: none;
+}
+.detail-panel.active {
+  display: block;
+}
+.detail-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 24px;
+  margin-bottom: 30px;
+}
+.runtime-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 20px;
+}
+.runtime-actions-left {
+  display: flex;
+  gap: 8px;
+}
+.runtime-actions-left.has-subprojects {
+  align-items: center;
+  gap: 6px;
+}
+.subproject-picker {
+  width: min(360px, 38vw);
+  min-width: 180px;
+}
+.detail-overview div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.detail-overview small {
+  color: var(--muted);
+}
+.detail-overview b {
+  font-size: 13px;
+  word-break: break-word;
+}
+.service-addresses {
+  grid-column: 1 / -1;
+}
+.access-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 5px;
+}
+.access-links a {
+  font-size: 12px;
+  font-weight: 500;
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px !important;
+}
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.config-form {
+  max-width: 900px;
+  padding: 24px;
+}
+.check-row {
+  display: flex;
+  gap: 28px;
+  margin: 16px 0;
+}
+.non-git-mode {
+  margin: 0 0 16px;
+}
+.runtime-config {
+  margin: 12px 0 18px;
+}
+.runtime-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.runtime-config-grid #nodeRuntimeFields {
+  display: contents;
+}
+.runtime-config-grid #nodeRuntimeFields[hidden] {
+  display: none !important;
+}
+.runtime-config-grid #nodeRuntimeFields .hint {
+  grid-column: 1;
+}
+.runtime-config-grid #pythonRuntimeFields {
+  display: contents;
+}
+.runtime-config-grid #pythonRuntimeFields[hidden] {
+  display: none !important;
+}
+.runtime-config-grid #genericRuntimeHint {
+  grid-column: 2;
+  margin: 0;
+}
+.runtime-config .check {
+  margin: 14px 0 0;
+}
+.advanced-config {
+  margin: 18px 0;
+}
+.advanced-config summary {
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.advanced-config[open] summary {
+  margin-bottom: 14px;
+}
+.advanced-config-content {
+  display: grid;
+  gap: 14px;
+}
+.advanced-config-content .form-grid {
+  gap: 14px;
+}
+.directory-browse-button {
+  margin: -4px 0 14px;
+}
+#directoryPicker {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fafbfc;
+}
+.directory-picker-title {
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+.directory-path-input {
+  margin: 0 0 10px;
+}
+.directory-roots,
+.directory-nav-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.directory-root,
+.directory-nav {
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.directory-picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.directory-picker-head .directory-path-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+}
+.directory-picker-head .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.directory-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 5px;
+  margin-top: 10px;
+  max-height: 220px;
+  overflow: auto;
+}
+.directory-item {
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 6px;
+  color: #344054;
+  font-weight: 400;
+}
+.directory-item:hover {
+  background: #edf4ff;
+  color: var(--blue);
+}
+.directory-dialog {
+  width: min(720px, 96vw);
+}
+.directory-dialog section {
+  padding: 22px;
+}
+.toast-container {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 2000;
+  display: grid;
+  gap: 8px;
+}
+.toast-message {
+  max-width: 360px;
+  padding: 11px 14px;
+  border-radius: 8px;
+  background: #344054;
+  color: #fff;
+  box-shadow: 0 8px 20px #10182826;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 0.18s,
+    transform 0.18s;
+}
+.toast-message.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.toast-message.error {
+  background: #b42318;
+}
+.terminal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 12px;
+}
+.terminal-display-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.terminal-display-controls .icon-button {
+  width: 26px;
+  height: 26px;
+  color: var(--ink);
+}
+.terminal-number-input {
+  width: 48px;
+  min-width: 0;
+  height: 26px;
+  margin: 0;
+  padding: 2px 4px;
+  font-size: 12px;
+  text-align: center;
+}
+.terminal-dimension-input {
+  width: 54px;
+}
+.terminal-control-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: var(--line);
+}
+.terminal-auto-size {
+  margin-left: 3px;
+  font-size: 12px;
+}
+.terminal-card {
+  height: calc(100vh - 205px);
+  min-height: 560px;
+  background: #101828;
+  border-radius: 10px;
+  overflow: hidden;
+  padding: 14px;
+}
+#terminalScreen {
+  width: 100%;
+  height: 100%;
+}
+#terminalScreen .xterm-viewport {
+  overflow-y: scroll !important;
+  scrollbar-color: #667085 #101828;
+}
+#terminalScreen .xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}
+#terminalScreen .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #475467;
+  border-radius: 8px;
+}
+.tmux-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+.tmux-card {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  padding: 17px;
+}
+.tmux-card-head,
+.tmux-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tmux-card-head b,
+.tmux-card-head small {
+  display: block;
+}
+.tmux-card-head small {
+  margin-top: 4px;
+  color: var(--muted);
+  font:
+    11px ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+.tmux-meta {
+  display: grid;
+  gap: 8px;
+  margin: 17px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.tmux-meta i {
+  margin-right: 5px;
+}
+.tmux-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 44px 20px;
+  color: var(--muted);
+}
+.tmux-empty i {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 28px;
+}
+.tmux-empty p {
+  margin: 0 0 5px;
+  color: var(--ink);
+  font-weight: 600;
+}
+@media (max-width: 640px) {
+  .terminal-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .terminal-display-controls {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  .terminal-card {
+    height: calc(100vh - 210px);
+    min-height: 460px;
+    padding: 10px;
+  }
+}
+.config-form footer {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+.detail-panel h3 {
+  font-size: 15px;
+  margin: 25px 0 10px;
+}
+@media (max-width: 640px) {
+  .detail-overview,
+  .form-grid,
+  .runtime-config-grid {
+    grid-template-columns: 1fr;
+  }
+  .check-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+  .detail-tabs {
+    gap: 18px;
+  }
+}
 :root {
   --navy: #101828;
   --ink: #172033;

@@ -24,7 +24,10 @@ function toast(message, type = "info") {
   item.textContent = message;
   $("#toastContainer").appendChild(item);
   setTimeout(() => item.classList.add("visible"), 10);
-  setTimeout(() => { item.classList.remove("visible"); setTimeout(() => item.remove(), 180); }, 3000);
+  setTimeout(() => {
+    item.classList.remove("visible");
+    setTimeout(() => item.remove(), 180);
+  }, 3000);
 }
 async function api(url, opts = {}) {
   const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -34,6 +37,16 @@ async function api(url, opts = {}) {
 }
 function esc(s = "") {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function parseSubprojectOptions(value) {
+  return String(value || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((display) => {
+      const [command, ...label] = display.split(/\s+/);
+      return { command, display, label: label.join(" ") };
+    });
 }
 function activatePage(page) {
   if (page !== "detail") closeTerminal();
@@ -86,7 +99,12 @@ async function refresh() {
       .map((x) => `<div><b>${esc(x[0])}</b><span>${esc(x[1])}</span></div>`)
       .join("");
     $("#projectSummary").innerHTML = d.projects.length
-      ? d.projects.map((p) => `<button type="button" class="summary-item" onclick="details(${p.id})" aria-label="查看项目 ${esc(p.name)} 详情"><span><b>${esc(p.name)}</b><small>${p.is_git ? esc(p.branch) + " · " : ""}PID ${p.process.pid || "-"}</small><small>内存 ${bytes(p.process.memory)}</small></span>${status(p)}</button>`).join("")
+      ? d.projects
+          .map(
+            (p) =>
+              `<button type="button" class="summary-item" onclick="details(${p.id})" aria-label="查看项目 ${esc(p.name)} 详情"><span><b>${esc(p.name)}</b><small>${p.is_git ? esc(p.branch) + " · " : ""}PID ${p.process.pid || "-"}</small><small>内存 ${bytes(p.process.memory)}</small></span>${status(p)}</button>`,
+          )
+          .join("")
       : '<span class="muted">还没有项目，前往项目管理页新建一个项目。</span>';
     renderProjects();
     const ops = await api("/api/operations");
@@ -114,7 +132,11 @@ function renderProjects() {
   const query = $("#projectNameFilter")?.value.trim().toLocaleLowerCase() || "";
   const runtime = $("#projectRuntimeFilter")?.value || "";
   const projects = projectList.filter((project) => {
-    const matchesName = !query || String(project.name || "").toLocaleLowerCase().includes(query);
+    const matchesName =
+      !query ||
+      String(project.name || "")
+        .toLocaleLowerCase()
+        .includes(query);
     const matchesRuntime = !runtime || (project.runtime || "python") === runtime;
     return matchesName && matchesRuntime;
   });
@@ -122,7 +144,9 @@ function renderProjects() {
     ? projects.map(card).join("")
     : `<tr><td colspan="6" class="empty-row">${projectList.length ? "没有符合筛选条件的项目" : "还没有项目，点击右上角“新建项目”开始管理。"}</td></tr>`;
 }
-function filterProjects() { renderProjects(); }
+function filterProjects() {
+  renderProjects();
+}
 async function loadTmuxSessions() {
   const target = $("#tmuxSessions");
   if (!target) return;
@@ -130,7 +154,12 @@ async function loadTmuxSessions() {
     const result = await api("/api/tmux/sessions");
     tmuxSessions = result.sessions;
     target.innerHTML = tmuxSessions.length
-      ? tmuxSessions.map((session) => `<article class="tmux-card"><div class="tmux-card-head"><div><b>${esc(session.project_name || "全局 Shell")}</b><small>${esc(session.name)}</small></div><span class="status running">${session.attached ? "已连接" : "后台运行"}</span></div><div class="tmux-meta"><span><i class="bi bi-grid-1x2"></i> ${session.windows} 个窗口</span><span><i class="bi bi-folder2-open"></i> ${esc(session.root_path || "用户主目录")}</span><span><i class="bi bi-clock"></i> ${esc(session.created_at || "-")}</span></div><div class="tmux-actions">${session.project_id ? `<button class="btn btn-outline-primary btn-sm" onclick="navigate('detail/${session.project_id}/terminal')"><i class="bi bi-terminal"></i> 打开终端</button>` : ""}<button class="icon-button danger" title="关闭会话" aria-label="关闭会话" onclick="closeTmuxSession('${esc(session.name)}')"><i class="bi bi-trash3"></i></button></div></article>`).join("")
+      ? tmuxSessions
+          .map(
+            (session) =>
+              `<article class="tmux-card"><div class="tmux-card-head"><div><b>${esc(session.project_name || "全局 Shell")}</b><small>${esc(session.name)}</small></div><span class="status running">${session.attached ? "已连接" : "后台运行"}</span></div><div class="tmux-meta"><span><i class="bi bi-grid-1x2"></i> ${session.windows} 个窗口</span><span><i class="bi bi-folder2-open"></i> ${esc(session.root_path || "用户主目录")}</span><span><i class="bi bi-clock"></i> ${esc(session.created_at || "-")}</span></div><div class="tmux-actions">${session.project_id ? `<button class="btn btn-outline-primary btn-sm" onclick="navigate('detail/${session.project_id}/terminal')"><i class="bi bi-terminal"></i> 打开终端</button>` : ""}<button class="icon-button danger" title="关闭会话" aria-label="关闭会话" onclick="closeTmuxSession('${esc(session.name)}')"><i class="bi bi-trash3"></i></button></div></article>`,
+          )
+          .join("")
       : '<section class="content-card tmux-empty"><i class="bi bi-terminal"></i><p>暂无项目终端会话</p><small>在项目详情的「终端」Tab 打开一个终端后，会话会显示在这里。</small></section>';
   } catch (e) {
     target.innerHTML = `<section class="content-card tmux-empty text-danger">${esc(e.message)}</section>`;
@@ -210,7 +239,9 @@ function setTerminalFont(value) {
   if (terminal) terminal.options.fontSize = terminalFontSize;
   setTimeout(resizeTerminal, 0);
 }
-function adjustTerminalFont(delta) { setTerminalFont(terminalFontSize + delta); }
+function adjustTerminalFont(delta) {
+  setTerminalFont(terminalFontSize + delta);
+}
 function adjustTerminalWindow(columnsDelta, rowsDelta) {
   const screen = $("#terminalScreen");
   if (!terminal || !screen) return;
@@ -241,13 +272,27 @@ function openTerminal(projectId) {
   if (missing.length) return toast(`终端不可用：未加载${missing.join("、")}。请重启 Release Lite 服务后重试。`, "error");
   closeTerminal();
   screen.innerHTML = "";
-  terminal = new Terminal({ cursorBlink: true, scrollback: 10000, fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", fontSize: terminalFontSize, lineHeight: 1.2, theme: { background: "#101828", foreground: "#d0d5dd", cursor: "#f2f4f7" } });
+  terminal = new Terminal({
+    cursorBlink: true,
+    scrollback: 10000,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+    fontSize: terminalFontSize,
+    lineHeight: 1.2,
+    theme: { background: "#101828", foreground: "#d0d5dd", cursor: "#f2f4f7" },
+  });
   if (typeof FitAddon !== "undefined") {
     terminalFitAddon = new FitAddon.FitAddon();
     terminal.loadAddon(terminalFitAddon);
   }
   terminal.open(screen);
-  screen.addEventListener("wheel", (event) => { event.preventDefault(); event.stopPropagation(); }, { passive: false, capture: true });
+  screen.addEventListener(
+    "wheel",
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    },
+    { passive: false, capture: true },
+  );
   terminal.write("\x1b[36m正在连接 tmux 交互会话…\x1b[0m\r\n");
   terminalSocket = io();
   terminalSocket.on("connect", () => {
@@ -260,7 +305,10 @@ function openTerminal(projectId) {
     terminal.write(`\x1b[32m已连接会话：${data.session}\x1b[0m\r\n`);
   });
   terminalSocket.on("terminal_output", (data) => terminal.write(data.data));
-  terminalSocket.on("terminal_error", (data) => { terminal.write(`\r\n\x1b[31m${data.message}\x1b[0m\r\n`); toast(data.message, "error"); });
+  terminalSocket.on("terminal_error", (data) => {
+    terminal.write(`\r\n\x1b[31m${data.message}\x1b[0m\r\n`);
+    toast(data.message, "error");
+  });
   terminalSocket.on("terminal_closed", () => terminal.write("\r\n\x1b[33m终端连接已关闭；tmux 会话仍在后台保留。\x1b[0m\r\n"));
   terminal.onData((data) => terminalSocket?.emit("terminal_input", { data }));
   terminal.onResize(({ cols, rows }) => {
@@ -273,6 +321,7 @@ async function act(id, a) {
     const subproject = $("#subprojectSelect")?.value || "";
     const r = await api(`/api/projects/${id}/action/${a}`, { method: "POST", body: JSON.stringify({ subproject }) });
     if (r.deployment_id) toast("代码更新任务已开始，可在详情页查看日志。");
+    if (r.dependency_update) toast("更新依赖任务已开始，可在运行日志中查看结果。");
     await refresh();
     if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id);
     if (["start", "restart"].includes(a)) {
@@ -311,12 +360,13 @@ function openEditor(id, fromRoute = false) {
       auto_deploy: 0,
       auto_restart: 0,
       is_git: 1,
-      runtime: "python",
+      runtime: "generic",
       python_executable: "python3",
       venv_path: ".venv",
       requirements_file: "requirements.txt",
       auto_install_dependencies: 1,
       node_version: "",
+      node_dependency_command: "",
       subprojects_enabled: 0,
       subprojects: "",
       process: { running: false },
@@ -333,32 +383,59 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   closeTerminal();
   const x = p.process || {};
   if (tab === "terminal" && !x.running) tab = "info";
-  const history = p.is_git && deps.length
-    ? deps
-        .map(
-          (d) =>
-            `<div class="deploy"><b>${esc(d.action)} · ${esc(d.status)}</b> ${esc(d.revision || "-")} <small>${esc(d.started_at)}</small> ${d.status === "success" ? `<button onclick="rollback(${p.id},${d.id})">回退到此版本</button>` : ""}<br><span class="muted">${esc(d.message || "")}</span></div>`,
-        )
-        .join("")
-    : '<p class="muted">暂无代码更新记录</p>';
-  const subprojectOptions = String(p.subprojects || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  const history =
+    p.is_git && deps.length
+      ? deps
+          .map(
+            (d) =>
+              `<div class="deploy"><b>${esc(d.action)} · ${esc(d.status)}</b> ${esc(d.revision || "-")} <small>${esc(d.started_at)}</small> ${d.status === "success" ? `<button onclick="rollback(${p.id},${d.id})">回退到此版本</button>` : ""}<br><span class="muted">${esc(d.message || "")}</span></div>`,
+          )
+          .join("")
+      : '<p class="muted">暂无代码更新记录</p>';
+  const subprojectOptions = parseSubprojectOptions(p.subprojects);
   const hasSubprojects = Boolean(p.subprojects_enabled);
-  const subprojectControl = hasSubprojects ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item)}" ${item === x.subproject ? "selected" : ""}>${esc(item)}</option>`).join("")}</select>` : "";
+  const selectedSubproject = subprojectOptions.find((item) => item.command === x.subproject);
+  const subprojectControl = hasSubprojects
+    ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item.command)}" ${item.command === x.subproject ? "selected" : ""}>${esc(item.display)}</option>`).join("")}</select>`
+    : "";
   const actionSize = hasSubprojects ? "" : " btn-sm";
-  const runActions = !isNew ? `<div class="runtime-actions"><div class="runtime-actions-left ${hasSubprojects ? "has-subprojects" : ""}">${subprojectControl}${x.running ? `<button class="btn btn-outline-danger${actionSize}" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success${actionSize}" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary${actionSize}" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i> 重启</button></div><button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>` : "";
+  const updateDependencies = p.runtime === "node" && String(p.node_dependency_command || "").trim()
+    ? `<button class="btn btn-outline-secondary${actionSize}" onclick="act(${p.id},'update-dependencies')">更新依赖</button>`
+    : "";
+  const runActions = !isNew
+    ? `<div class="runtime-actions"><div class="runtime-actions-left ${hasSubprojects ? "has-subprojects" : ""}">${subprojectControl}${x.running ? `<button class="btn btn-outline-danger${actionSize}" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success${actionSize}" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary${actionSize}" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i> 重启</button>${updateDependencies}</div></div>`
+    : "";
   const gitInfo = p.is_git ? `<div><small>Git 分支</small><b>${esc(p.branch || "main")}</b></div>` : "";
-  const info = `${runActions}<div class="detail-overview"><div><small>项目名称</small><b>${esc(p.name || "未命名项目")}</b></div><div><small>运行状态</small>${status(p)}</div><div><small>运行环境</small><b>${runtimeLabel(p.runtime, p.node_version)}</b></div>${gitInfo}<div><small>项目目录</small><b class="mono">${esc(p.root_path || "-")}</b></div><div><small>运行进程</small><b>PID ${x.pid || "-"} · CPU ${x.cpu || 0}% · ${bytes(x.memory)}</b></div><div><small>监听端口</small><b>${x.ports?.join(", ") || "-"}</b></div><div class="service-addresses"><small>服务地址</small>${accessLinks(x.ports || [])}</div></div>${p.is_git ? `<h3>代码更新历史</h3>${history}` : ""}`;
+  const subprojectInfo = hasSubprojects ? `<div><small>当前子项目</small><b>${esc(selectedSubproject?.display || x.subproject || "-")}</b></div>` : "";
+  const info = `${runActions}<div class="detail-overview"><div><small>项目名称</small><b>${esc(p.name || "未命名项目")}</b></div><div><small>运行状态</small>${status(p)}</div>${subprojectInfo}<div><small>运行环境</small><b>${runtimeLabel(p.runtime, p.node_version)}</b></div>${gitInfo}<div><small>项目目录</small><b class="mono">${esc(p.root_path || "-")}</b></div><div><small>运行进程</small><b>PID ${x.pid || "-"} · CPU ${x.cpu || 0}% · ${bytes(x.memory)}</b></div><div><small>监听端口</small><b>${x.ports?.join(", ") || "-"}</b></div><div class="service-addresses"><small>服务地址</small>${accessLinks(x.ports || [])}</div></div>${p.is_git ? `<h3>代码更新历史</h3>${history}` : ""}`;
   const webhook = p.id ? `${location.origin}/webhook/${p.id}/${p.webhook_secret}` : "保存项目后自动生成";
   const logs = `${p.is_git ? `<p class="muted">Webhook 地址（请妥善保管）</p><div class="log">${esc(webhook)}</div>` : ""}<div class="log-toolbar"><span id="activeLogMeta">运行日志 · ${fileSize(logSummary.runtime_size)}</span><button id="clearLogButton" class="icon-button danger" title="清空运行日志" aria-label="清空运行日志" onclick="clearLog('runtime')"><i class="bi bi-trash3"></i></button></div><div class="tabs"><button onclick="showLog('runtime', ${logSummary.runtime_size})">运行日志</button>${p.is_git ? `<button onclick="showLog('deploy', ${logSummary.deploy_size})">代码更新日志</button>` : ""}</div><pre class="log" id="log">${esc(runtime || "暂无运行日志")}</pre>`;
-  const terminal = !isNew && x.running ? `<div class="terminal-toolbar"><span class="muted">tmux 分屏：<code>Ctrl-b</code> 后按 <code>%</code>（纵向）或 <code>"</code>（横向）</span><div class="terminal-display-controls"><span>字号</span><button class="icon-button" title="缩小字号" onclick="adjustTerminalFont(-1)"><i class="bi bi-dash-lg"></i></button><input id="terminalFontSize" class="terminal-number-input" type="number" min="1" value="${terminalFontSize}" onchange="setTerminalFont(this.value)"><button class="icon-button" title="放大字号" onclick="adjustTerminalFont(1)"><i class="bi bi-plus-lg"></i></button><span class="terminal-control-divider"></span><span>终端尺寸</span><button class="icon-button" title="缩窄窗口" onclick="adjustTerminalWindow(-10,0)"><i class="bi bi-arrows-collapse-horizontal"></i></button><input id="terminalColumns" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_COLUMNS}" placeholder="列" onchange="setTerminalWindow()"><span>×</span><input id="terminalRows" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_ROWS}" placeholder="行" onchange="setTerminalWindow()"><button class="icon-button" title="加宽窗口" onclick="adjustTerminalWindow(10,0)"><i class="bi bi-arrows-expand-horizontal"></i></button><button class="icon-button" title="降低窗口" onclick="adjustTerminalWindow(0,-5)"><i class="bi bi-arrows-collapse-vertical"></i></button><button class="icon-button" title="加高窗口" onclick="adjustTerminalWindow(0,5)"><i class="bi bi-arrows-expand-vertical"></i></button><button class="action-link terminal-auto-size" onclick="resetTerminalWindow()">填满面板</button></div></div><section class="terminal-card"><div id="terminalScreen"></div></section>` : "";
+  const terminal =
+    !isNew && x.running
+      ? `<div class="terminal-toolbar"><span class="muted">tmux 分屏：<code>Ctrl-b</code> 后按 <code>%</code>（纵向）或 <code>"</code>（横向）</span><div class="terminal-display-controls"><span>字号</span><button class="icon-button" title="缩小字号" onclick="adjustTerminalFont(-1)"><i class="bi bi-dash-lg"></i></button><input id="terminalFontSize" class="terminal-number-input" type="number" min="1" value="${terminalFontSize}" onchange="setTerminalFont(this.value)"><button class="icon-button" title="放大字号" onclick="adjustTerminalFont(1)"><i class="bi bi-plus-lg"></i></button><span class="terminal-control-divider"></span><span>终端尺寸</span><button class="icon-button" title="缩窄窗口" onclick="adjustTerminalWindow(-10,0)"><i class="bi bi-arrows-collapse-horizontal"></i></button><input id="terminalColumns" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_COLUMNS}" placeholder="列" onchange="setTerminalWindow()"><span>×</span><input id="terminalRows" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_ROWS}" placeholder="行" onchange="setTerminalWindow()"><button class="icon-button" title="加宽窗口" onclick="adjustTerminalWindow(10,0)"><i class="bi bi-arrows-expand-horizontal"></i></button><button class="icon-button" title="降低窗口" onclick="adjustTerminalWindow(0,-5)"><i class="bi bi-arrows-collapse-vertical"></i></button><button class="icon-button" title="加高窗口" onclick="adjustTerminalWindow(0,5)"><i class="bi bi-arrows-expand-vertical"></i></button><button class="action-link terminal-auto-size" onclick="resetTerminalWindow()">填满面板</button></div></div><section class="terminal-card"><div id="terminalScreen"></div></section>`
+      : "";
+  const topStartStop = !isNew
+    ? x.running
+      ? `<button class="icon-button stop-button" title="停止" aria-label="停止" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i></button>`
+      : `<button class="icon-button start-button" title="启动" aria-label="启动" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i></button>`
+    : "";
+  const topRefresh = !isNew
+    ? `<button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})">刷新</button>`
+    : "";
+  const topDeploy = !isNew && p.is_git ? `<button class="btn btn-primary btn-sm" onclick="act(${p.id},'deploy')">更新代码</button>` : "";
   $("#details").innerHTML =
-    `<div class="detail-topline"><div><b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew && p.is_git ? `<button class="btn btn-primary btn-sm" onclick="act(${p.id},'deploy')">更新代码</button>` : ""}</div><nav class="detail-tabs"><button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息</button><button class="detail-tab ${tab === "config" ? "active" : ""}" onclick="showDetailTab('config')">项目配置</button><button class="detail-tab ${tab === "logs" ? "active" : ""}" onclick="showDetailTab('logs')">日志</button>${!isNew && x.running ? `<button class="detail-tab ${tab === "terminal" ? "active" : ""}" onclick="showDetailTab('terminal')">终端</button>` : ""}</nav><section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section><section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${configForm(p, isNew)}</section><section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && x.running ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
+    `<div class="detail-topline"><div><b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions">${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div><nav class="detail-tabs"><button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息</button><button class="detail-tab ${tab === "config" ? "active" : ""}" onclick="showDetailTab('config')">项目配置</button><button class="detail-tab ${tab === "logs" ? "active" : ""}" onclick="showDetailTab('logs')">日志</button>${!isNew && x.running ? `<button class="detail-tab ${tab === "terminal" ? "active" : ""}" onclick="showDetailTab('terminal')">终端</button>` : ""}</nav><section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section><section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${configForm(p, isNew)}</section><section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && x.running ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
   setupProjectOptions(p);
   if (!isNew && x.running && tab === "terminal") setTimeout(() => setupProjectTerminal(p.id), 0);
 }
 function accessLinks(ports) {
   if (!ports.length) return '<span class="muted">未检测到监听端口</span>';
-  return ports.map((port) => `<div class="access-links"><a href="http://localhost:${port}" target="_blank" rel="noreferrer">localhost:${port}</a><a href="http://${esc(serverInfo.local_ip || "127.0.0.1")}:${port}" target="_blank" rel="noreferrer">${esc(serverInfo.local_ip || "127.0.0.1")}:${port}</a></div>`).join("");
+  return ports
+    .map(
+      (port) =>
+        `<div class="access-links"><a href="http://localhost:${port}" target="_blank" rel="noreferrer">localhost:${port}</a><a href="http://${esc(serverInfo.local_ip || "127.0.0.1")}:${port}" target="_blank" rel="noreferrer">${esc(serverInfo.local_ip || "127.0.0.1")}:${port}</a></div>`,
+    )
+    .join("");
 }
 function setupProjectOptions(project) {
   const isGit = Boolean(project.is_git);
@@ -379,15 +456,15 @@ function setupProjectOptions(project) {
     button.type = "button";
     button.className = "btn btn-outline-secondary btn-sm directory-browse-button";
     button.innerHTML = '<i class="bi bi-folder2-open"></i> 选择服务器目录';
-    button.onclick = () => browseDirectories();
+    button.onclick = () => browseDirectories($("#root_path")?.value.trim() || "");
     rootLabel.insertAdjacentElement("afterend", button);
   }
   if (rootLabel && !$("#runtimeConfig")) {
     const runtime = document.createElement("section");
     runtime.id = "runtimeConfig";
     runtime.className = "runtime-config";
-    runtime.innerHTML = `<h3>运行环境</h3><label>运行环境<select id="runtime" onchange="toggleRuntimeConfig()"><option value="python" ${project.runtime === "python" ? "selected" : ""}>Python</option><option value="node" ${project.runtime === "node" ? "selected" : ""}>Node.js</option><option value="generic" ${project.runtime === "generic" ? "selected" : ""}>通用命令行</option></select></label><div id="pythonRuntimeFields"><div class="form-grid"><label>Python 命令<input id="python_executable" value="${esc(project.python_executable || "python3")}" placeholder="python3"></label><label>虚拟环境目录<input id="venv_path" value="${esc(project.venv_path || ".venv")}" placeholder=".venv"><span class="hint">相对项目目录</span></label><label>pip 依赖文件<input id="requirements_file" value="${esc(project.requirements_file || "requirements.txt")}" placeholder="requirements.txt"><span class="hint">相对项目目录</span></label></div><label class="check"><input id="auto_install_dependencies" type="checkbox" ${project.auto_install_dependencies ? "checked" : ""}> 更新代码时自动安装 pip 依赖</label></div><div id="nodeRuntimeFields"><label>Node.js 版本<select id="node_version"><option value="">正在读取 NVM 已安装版本…</option></select></label><p class="hint">选择后会将对应 NVM 版本注入项目 PATH，启动命令无需再写 <code>nvm use</code>。</p></div><p id="genericRuntimeHint" class="hint">直接执行启动命令，适用于 Docker、Java、Go、Shell 等任意运行方式。</p>`;
-    rootLabel.insertAdjacentElement("afterend", runtime);
+    runtime.innerHTML = `<div class="runtime-config-grid"><label>运行环境<select id="runtime" onchange="toggleRuntimeConfig()"><option value="python" ${project.runtime === "python" ? "selected" : ""}>Python</option><option value="node" ${project.runtime === "node" ? "selected" : ""}>Node.js</option><option value="generic" ${project.runtime === "generic" ? "selected" : ""}>通用命令行</option></select></label><div id="nodeRuntimeFields"><label>Node.js 版本<select id="node_version"><option value="">正在读取 NVM 已安装版本…</option></select></label><label>更新依赖命令<input id="node_dependency_command" value="${esc(project.node_dependency_command || "")}" placeholder="例如：pnpm install --frozen-lockfile"></label><span class="hint">选择的 Node.js 版本会用于执行此命令。</span></div><div id="pythonRuntimeFields"><label>Python 命令<input id="python_executable" value="${esc(project.python_executable || "python3")}" placeholder="python3"></label><label>虚拟环境目录<input id="venv_path" value="${esc(project.venv_path || ".venv")}" placeholder=".venv"><span class="hint">相对项目目录</span></label><label>pip 依赖文件<input id="requirements_file" value="${esc(project.requirements_file || "requirements.txt")}" placeholder="requirements.txt"><span class="hint">相对项目目录</span></label><label class="check"><input id="auto_install_dependencies" type="checkbox" ${project.auto_install_dependencies ? "checked" : ""}> 更新代码时自动安装 pip 依赖</label></div><p id="genericRuntimeHint" class="hint">直接执行启动命令，适用于 Docker、Java、Go、Shell 等任意运行方式。</p></div>`;
+    $("#directoryBrowseButton").insertAdjacentElement("afterend", runtime);
   }
   loadNodeVersions(project.node_version || "");
   toggleRuntimeConfig();
@@ -404,15 +481,19 @@ function toggleSubprojectsConfig() {
   const enabled = $("#subprojects_enabled")?.checked;
   const field = $("#subprojectsField");
   const input = $("#subprojects");
+  const scriptsDiscovery = $("#scriptsDiscovery");
   if (field) field.hidden = !enabled;
   if (input) input.required = enabled;
+  if (scriptsDiscovery) scriptsDiscovery.hidden = enabled;
 }
 async function loadNodeVersions(selectedVersion) {
   const select = $("#node_version");
   if (!select) return;
   try {
     const data = await api("/api/node-versions");
-    const options = data.versions.length ? data.versions.map((version) => `<option value="${esc(version)}" ${version === selectedVersion ? "selected" : ""}>${esc(version)}</option>`).join("") : "";
+    const options = data.versions.length
+      ? data.versions.map((version) => `<option value="${esc(version)}" ${version === selectedVersion ? "selected" : ""}>${esc(version)}</option>`).join("")
+      : "";
     select.innerHTML = `<option value="">不指定（使用系统 PATH）</option>${options}`;
     if (!data.versions.length) toast("未在 NVM 目录中找到已安装的 Node.js 版本", "error");
   } catch (e) {
@@ -435,17 +516,28 @@ async function browseDirectories(path = "") {
   try {
     const data = await api("/api/directories" + (path ? "?path=" + encodeURIComponent(path) : ""));
     const rootButtons = data.roots.map((root) => `<button type="button" class="directory-root" onclick="browseDirectories('${esc(root)}')">${esc(root)}</button>`).join("");
+    const addressInput = (value = "") =>
+      `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(value)}" data-path="${esc(value)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()">`;
     if (!data.path) {
       picker.innerHTML = `<div class="directory-picker-title">选择允许浏览的根目录</div><div class="directory-roots">${rootButtons}</div>`;
       return;
     }
-    const parent = data.parent ? `<button type="button" class="directory-nav" onclick="browseDirectories('${esc(data.parent)}')"><i class="bi bi-arrow-up"></i> 上级目录</button>` : "";
-    const folders = data.directories.length ? data.directories.map((item) => `<button type="button" class="directory-item" onclick="browseDirectories('${esc(item.path)}')"><i class="bi bi-folder"></i> ${esc(item.name)}</button>`).join("") : '<span class="muted">当前目录没有可浏览的子目录</span>';
-    picker.innerHTML = `<div class="directory-picker-head"><code>${esc(data.path)}</code><button type="button" class="btn btn-primary btn-sm" onclick="selectDirectory('${esc(data.path)}')">使用此目录</button></div><div class="directory-nav-row">${parent}${rootButtons}</div><div class="directory-list">${folders}</div>`;
+    const parent = data.parent ? `<button type="button" class="directory-nav" onclick="browseDirectories('${esc(data.parent)}')">..</button>` : "";
+    const folders = data.directories.length
+      ? data.directories
+          .map((item) => `<button type="button" class="directory-item" onclick="browseDirectories('${esc(item.path)}')"><i class="bi bi-folder"></i> ${esc(item.name)}</button>`)
+          .join("")
+      : '<span class="muted">当前目录没有可浏览的子目录</span>';
+    picker.innerHTML = `<div class="directory-picker-head">${addressInput(data.path)}<button type="button" class="btn btn-primary btn-sm" onclick="selectDirectory('${esc(data.path)}')">使用此目录</button></div><div class="directory-nav-row">${parent}${rootButtons}</div><div class="directory-list">${folders}</div>`;
   } catch (e) {
-    picker.innerHTML = `<span class="text-danger">${esc(e.message)}</span>`;
+    picker.innerHTML = `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(path)}" data-path="${esc(path)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()"><span class="text-danger">${esc(e.message)}</span>`;
     toast(e.message, "error");
   }
+}
+function browseDirectoryFromInput() {
+  const input = $("#directoryPathInput");
+  if (!input || input.value.trim() === input.dataset.path) return;
+  browseDirectories(input.value.trim());
 }
 function selectDirectory(path) {
   $("#root_path").value = path;
@@ -454,8 +546,10 @@ function selectDirectory(path) {
 }
 function configForm(p, isNew) {
   const v = (k) => esc(p[k] || "");
-  const subprojectsConfig = `<label class="check"><input id="subprojects_enabled" type="checkbox" ${p.subprojects_enabled ? "checked" : ""} onchange="toggleSubprojectsConfig()"> 启用子项目</label><label id="subprojectsField">子项目配置 <span class="hint">每行一个名称；启动命令可使用 {{project}}</span><textarea id="subprojects" placeholder="admin&#10;web&#10;worker">${v("subprojects")}</textarea></label>`;
-  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label>Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><label>启动命令 <span class="hint">在项目目录中执行；子项目可用 {{project}}</span><input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}"></label>${subprojectsConfig}<div class="scripts"><button type="button" style="width:200px;" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label>更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label>更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><div class="check-row"><label class="check"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div><footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
+  const subprojectsConfig = `<label class="check"><input id="subprojects_enabled" type="checkbox" ${p.subprojects_enabled ? "checked" : ""} onchange="toggleSubprojectsConfig()"> 启用子项目</label><label id="subprojectsField">子项目配置 <span class="hint">每行填写“命令 label”；label 可省略，启动命令可使用 {{project}}</span><textarea id="subprojects" placeholder="kp 知识包后台&#10;bs 书架&#10;ss">${v("subprojects")}</textarea></label>`;
+  const advancedConfig = `<details class="advanced-config"><summary>高级配置</summary><div class="advanced-config-content"><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label>更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label>更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><label class="check"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label></div></details>`;
+  const autoRestartConfig = `<div class="check-row"><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div>`;
+  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label>Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><label>启动命令 <span class="hint">在项目目录中执行；子项目可用 {{project}}</span><input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}"></label><div id="scriptsDiscovery" class="scripts"><button type="button" style="width:200px;" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div>${subprojectsConfig}${advancedConfig}${autoRestartConfig}<footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
 }
 function showDetailTab(tab) {
   const id = $("#id")?.value || "new";
@@ -482,9 +576,25 @@ function useScript() {
 async function saveProject(e) {
   e.preventDefault();
   const data = {};
-  ["id", "name", "root_path", "branch", "start_command", "stop_command", "pre_deploy_hook", "post_deploy_hook", "env_vars", "git_webhook_secret", "runtime", "python_executable", "venv_path", "requirements_file", "node_version", "subprojects"].forEach(
-    (k) => (data[k] = $("#" + k).value),
-  );
+  [
+    "id",
+    "name",
+    "root_path",
+    "branch",
+    "start_command",
+    "stop_command",
+    "pre_deploy_hook",
+    "post_deploy_hook",
+    "env_vars",
+    "git_webhook_secret",
+    "runtime",
+    "python_executable",
+    "venv_path",
+    "requirements_file",
+    "node_version",
+    "node_dependency_command",
+    "subprojects",
+  ].forEach((k) => (data[k] = $("#" + k).value));
   data.auto_deploy = $("#auto_deploy").checked;
   data.auto_restart = $("#auto_restart").checked;
   data.subprojects_enabled = $("#subprojects_enabled").checked;

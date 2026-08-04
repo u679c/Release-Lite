@@ -37,6 +37,7 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("RELEASE_LITE_SECRET", secrets.token_hex(32))
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 deploy_locks = {}
+dependency_locks = {}
 deploy_locks_guard = threading.Lock()
 terminal_sessions = {}
 terminal_sessions_guard = threading.Lock()
@@ -50,7 +51,7 @@ CREATE TABLE IF NOT EXISTS projects (
  auto_deploy INTEGER NOT NULL DEFAULT 0, auto_restart INTEGER NOT NULL DEFAULT 0,
  subprojects_enabled INTEGER NOT NULL DEFAULT 0, subprojects TEXT DEFAULT '',
  runtime TEXT NOT NULL DEFAULT 'python', python_executable TEXT DEFAULT 'python3', venv_path TEXT DEFAULT '.venv',
- requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1, node_version TEXT DEFAULT '',
+ requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1, node_version TEXT DEFAULT '', node_dependency_command TEXT DEFAULT '',
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS deployments (
@@ -237,7 +238,14 @@ def process_info(project):
         except (psutil.Error, OSError): pass
     return info
 def subproject_options(project):
-    return [item.strip() for item in (project.get("subprojects") or "").splitlines() if item.strip()]
+    options = []
+    for item in (project.get("subprojects") or "").splitlines():
+        value = item.strip()
+        if not value:
+            continue
+        command, *label = value.split(None, 1)
+        options.append({"command": command, "label": label[0] if label else "", "display": value})
+    return options
 def start_project(project, operator="web", subproject=None):
     root = safe_project_path(project); state = process_info(project)
     if state["process_alive"]: raise RuntimeError("项目进程仍在运行，无法重复启动")
@@ -246,8 +254,9 @@ def start_project(project, operator="web", subproject=None):
     if project.get("subprojects_enabled"):
         options = subproject_options(project)
         if not options: raise RuntimeError("请先在项目配置中填写子项目")
-        selected_subproject = (subproject or state.get("subproject") or options[0]).strip()
-        if selected_subproject not in options: raise RuntimeError("所选子项目不在项目配置中")
+        option_by_command = {item["command"]: item for item in options}
+        selected_subproject = (subproject or state.get("subproject") or options[0]["command"]).strip()
+        if selected_subproject not in option_by_command: raise RuntimeError("所选子项目不在项目配置中")
         command = command.replace("{{project}}", selected_subproject)
     env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env["RELEASE_LITE_PROJECT_ID"] = str(project["id"]); env = apply_runtime_env(project, root, env)
     runtime_log = LOG_DIR / f"project-{project['id']}-runtime.log"
@@ -305,6 +314,32 @@ def queue_deploy(project, operator="web", revision=None, action="deploy"):
         did = write("INSERT INTO deployments(project_id,action,branch,revision,status,started_at,operator,log_path) VALUES(?,?,?,?,?,?,?,?)", (project["id"], action, project["branch"], revision, "running", now(), operator, str(log_file(project["id"], "pending"))))
         path = str(log_file(project["id"], did)); write("UPDATE deployments SET log_path=? WHERE id=?", (path, did))
         t = threading.Thread(target=deploy_worker, args=(project["id"], did, revision), daemon=True); deploy_locks[project["id"]] = t; t.start(); return did
+def update_node_dependencies_worker(project_id):
+    project = project_or_404(project_id)
+    logfile = LOG_DIR / f"project-{project_id}-runtime.log"
+    try:
+        if project.get("runtime") != "node": raise RuntimeError("仅 Node.js 项目支持更新依赖")
+        command = (project.get("node_dependency_command") or "").strip()
+        if not command: raise RuntimeError("请先填写更新依赖命令")
+        root = safe_project_path(project)
+        env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env = apply_runtime_env(project, root, env)
+        append_log(logfile, f"\n--- update dependencies {now()} ---\n")
+        run_command(command, root, env, logfile, "更新 Node.js 依赖")
+        audit(project_id, "更新依赖成功", command, "dependencies")
+    except Exception as exc:
+        message = str(exc)
+        append_log(logfile, f"\n更新 Node.js 依赖失败：{message}\n")
+        audit(project_id, "更新依赖失败", message, "dependencies")
+    finally:
+        with deploy_locks_guard: dependency_locks.pop(project_id, None)
+def queue_node_dependencies(project):
+    if project.get("runtime") != "node": raise RuntimeError("仅 Node.js 项目支持更新依赖")
+    if not (project.get("node_dependency_command") or "").strip(): raise RuntimeError("请先填写更新依赖命令")
+    if process_info(project)["process_alive"]: raise RuntimeError("请先停止运行项目")
+    with deploy_locks_guard:
+        if project["id"] in deploy_locks or project["id"] in dependency_locks: raise RuntimeError("该项目已有更新任务在执行")
+        task = threading.Thread(target=update_node_dependencies_worker, args=(project["id"],), daemon=True)
+        dependency_locks[project["id"]] = task; task.start()
 def discover_scripts(root_path):
     try:
         root = Path(root_path).expanduser().resolve(); scripts=[]
@@ -340,11 +375,14 @@ def save_project():
     is_git=int(not bool(data.get("non_git")))
     subprojects_enabled = int(bool(data.get("subprojects_enabled")))
     subprojects = data.get("subprojects") or ""
-    if subprojects_enabled and not subproject_options({"subprojects": subprojects}): return jsonify(error="请至少填写一个子项目"), 400
-    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),subprojects_enabled,subprojects,runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
+    subproject_items = subproject_options({"subprojects": subprojects})
+    if subprojects_enabled and not subproject_items: return jsonify(error="请至少填写一个子项目"), 400
+    commands = [item["command"] for item in subproject_items]
+    if len(commands) != len(set(commands)): return jsonify(error="子项目命令不能重复"), 400
+    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),subprojects_enabled,subprojects,runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",(data.get("node_dependency_command") or "").strip() if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
     if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,subprojects_enabled=?,subprojects=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,subprojects_enabled,subprojects,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", vals[:19]+(wid,vals[19],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,subprojects_enabled=?,subprojects=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,node_dependency_command=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
+    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,subprojects_enabled,subprojects,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,node_dependency_command,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", vals[:20]+(wid,vals[20],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
@@ -358,6 +396,7 @@ def action(project_id,action):
         elif action=="stop": stop_project(p)
         elif action=="restart": stop_project(p); start_project(p, subproject=subproject); audit(project_id,"重启",p["name"])
         elif action=="deploy": return jsonify(deployment_id=queue_deploy(p))
+        elif action=="update-dependencies": queue_node_dependencies(p); return jsonify(dependency_update=True)
         else: abort(404)
         return jsonify(ok=True)
     except Exception as e: return jsonify(error=str(e)),400
@@ -603,6 +642,7 @@ def init():
             "requirements_file": "ALTER TABLE projects ADD COLUMN requirements_file TEXT DEFAULT 'requirements.txt'",
             "auto_install_dependencies": "ALTER TABLE projects ADD COLUMN auto_install_dependencies INTEGER NOT NULL DEFAULT 1",
             "node_version": "ALTER TABLE projects ADD COLUMN node_version TEXT DEFAULT ''",
+            "node_dependency_command": "ALTER TABLE projects ADD COLUMN node_dependency_command TEXT DEFAULT ''",
             "subprojects_enabled": "ALTER TABLE projects ADD COLUMN subprojects_enabled INTEGER NOT NULL DEFAULT 0",
             "subprojects": "ALTER TABLE projects ADD COLUMN subprojects TEXT DEFAULT ''",
         }
