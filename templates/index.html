@@ -29,13 +29,14 @@
           <button class="nav-link" data-page="projects" onclick="showPage('projects')">
             <span><i class="bi bi-box-seam"></i></span> 项目管理
           </button>
-          <button class="nav-link" data-page="operations" onclick="showPage('operations')">
-            <span><i class="bi bi-clock-history"></i></span> 操作记录
-          </button>
+          
           <button class="nav-link more-menu-toggle" type="button" onclick="toggleMoreMenu()"><span><i class="bi bi-three-dots"></i></span> 更多 <i class="bi bi-chevron-down more-menu-arrow"></i></button>
           <div id="moreMenu" class="sidebar-submenu" hidden>
             <button class="nav-link" data-page="tmux" onclick="showPage('tmux')"><span><i class="bi bi-terminal"></i></span> Tmux 管理</button>
-            <button class="nav-link" data-page="storage" onclick="showPage('storage')"><span><i class="bi bi-device-hdd"></i></span> 日志管理</button>
+            <button class="nav-link" data-page="storage" onclick="showPage('storage')"><span><i class="bi bi-device-hdd"></i></span> 日志 管理</button>
+            <button class="nav-link" data-page="operations" onclick="showPage('operations')">
+            <span><i class="bi bi-clock-history"></i></span> 操作记录
+          </button>
           </div>
         </nav>
         <div class="sidebar-footer"><span class="online-dot"></span> 面板服务运行中</div>
