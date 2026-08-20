@@ -4,6 +4,7 @@ let tmuxSessions = [];
 let storageLogEntries = [];
 let storageSort = "size_desc";
 let storagePage = 1;
+let memoryHistory = [];
 let terminal = null;
 let terminalSocket = null;
 let terminalFitAddon = null;
@@ -40,6 +41,41 @@ async function api(url, opts = {}) {
 }
 function esc(s = "") {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+function memoryNumber(n) {
+  return n == null ? "-" : (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+}
+function memoryChart() {
+  const values = memoryHistory.length ? memoryHistory : [{ value: 0, state: "normal" }];
+  const width = 360, height = 58;
+  // 活动监视器将正常至临界前的压力范围放大呈现，70 以上视为图表顶部。
+  const point = (item, index) => `${(index / Math.max(1, values.length - 1)) * width},${height - Math.max(2, Math.min(height - 3, item.value / 70 * height))}`;
+  const groups = [{ state: values[0].state || "normal", points: [{ index: 0, item: values[0] }] }];
+  values.slice(1).forEach((item, offset) => {
+    const index = offset + 1;
+    const state = item.state || "normal";
+    // 切色时与前一个区段共用一个采样点，避免两个填充区域间出现白缝。
+    if (groups.at(-1).state !== state) groups.push({ state, points: [{ index: index - 1, item: values[index - 1] }] });
+    groups.at(-1).points.push({ index, item });
+  });
+  const parts = groups.map((group) => {
+    const first = group.points[0], last = group.points.at(-1);
+    const line = group.points.map(({ item, index }) => point(item, index)).join(" ");
+    const startX = first.index / Math.max(1, values.length - 1) * width;
+    const endX = last.index / Math.max(1, values.length - 1) * width;
+    return `<polygon class="${group.state}" points="${startX},${height} ${line} ${endX},${height}"/><polyline class="${group.state}" points="${line}"/>`;
+  }).join("");
+  const time = (timestamp) => new Date(timestamp).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">${parts}</svg><div class="memory-chart-times"><span>${time(values[0].timestamp || Date.now())}</span><span>现在 ${time(values.at(-1).timestamp || Date.now())}</span></div>`;
+}
+function renderMemoryMonitor(memory) {
+  if (!memory || !$("#memoryMonitor")) return;
+  memoryHistory.push({ value: memory.pressure || 0, state: memory.pressure_state || "normal", timestamp: Date.now() });
+  memoryHistory = memoryHistory.slice(-120);
+  $("#memoryMonitor").innerHTML = `<div class="memory-pressure"><div class="memory-pressure-title">内存压力</div><div class="memory-chart">${memoryChart()}</div></div><div class="memory-summary"><div><b>物理内存：</b><span>${memoryNumber(memory.total)}</span></div><div><b>已使用内存：</b><span>${memoryNumber(memory.used)}</span></div><div><b>已缓存文件：</b><span>${memoryNumber(memory.cached)}</span></div><div><b>已使用的交换：</b><span>${memoryNumber(memory.swap_used)}</span></div></div><div class="memory-breakdown"><div><b>App 内存：</b><span>${memoryNumber(memory.app_memory)}</span></div><div><b>联动内存：</b><span>${memoryNumber(memory.wired_memory)}</span></div><div><b>被压缩：</b><span>${memoryNumber(memory.compressed)}</span></div></div>`;
+}
+async function refreshMemory() {
+  try { renderMemoryMonitor(await api("/api/system/memory")); } catch (e) { console.error(e); }
 }
 function parseSubprojectOptions(value) {
   return String(value || "")
@@ -89,6 +125,7 @@ async function applyRoute() {
   details(Number(id), tab, true);
 }
 function status(p) {
+  if (p.dependency_updating) return `<span class="status running">依赖更新中…</span>`;
   return `<span class="status ${p.process?.running ? "running" : "stopped"}">${p.process?.running ? "运行中" : "已停止"}</span>`;
 }
 async function refresh() {
@@ -97,6 +134,7 @@ async function refresh() {
     projectList = d.projects;
     const s = d.system;
     serverInfo = s;
+    renderMemoryMonitor(s.memory);
     $("#metrics").innerHTML = [
       ["CPU 使用率", s.cpu_percent + "%", s.cpu_count + " 核心"],
       ["内存使用", s.memory_percent + "%", bytes(s.memory_used) + " / " + bytes(s.memory_total)],
@@ -136,10 +174,11 @@ async function refresh() {
 }
 function card(p) {
   const x = p.process;
+  const updating = p.dependency_updating;
   const startStop = x.running
     ? `<button class="icon-button stop-button" title="停止" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i></button>`
-    : `<button class="icon-button start-button" title="启动" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i></button>`;
-  return `<tr><td><div class="project-name">${esc(p.name)}</div><div class="project-path">${esc(p.root_path)}</div></td><td>${p.is_git ? esc(p.branch) : ""}</td><td>${status(p)}</td><td><div class="resource">PID ${x.pid || "-"}<br>CPU ${x.cpu || 0}% · ${bytes(x.memory)}</div></td><td>${x.ports.join(", ") || "-"}</td><td><div class="row-actions">${startStop}<button class="icon-button restart-button" title="重启" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i></button><button class="action-link" onclick="details(${p.id})">详情</button><button class="action-link delete-link" onclick="removeProject(${p.id})">删除</button></div></td></tr>`;
+    : `<button class="icon-button start-button" title="${updating ? "依赖更新中，不能启动" : "启动"}" ${updating ? "disabled" : `onclick="act(${p.id},'start')"`}><i class="bi bi-play-circle"></i></button>`;
+  return `<tr><td><div class="project-name">${esc(p.name)}</div><div class="project-path">${esc(p.root_path)}</div></td><td>${p.is_git ? esc(p.branch) : ""}</td><td>${status(p)}</td><td><div class="resource">PID ${x.pid || "-"}<br>CPU ${x.cpu || 0}% · ${bytes(x.memory)}</div></td><td>${x.ports.join(", ") || "-"}</td><td><div class="row-actions">${startStop}<button class="icon-button restart-button" title="${updating ? "依赖更新中，不能重启" : "重启"}" ${updating ? "disabled" : `onclick="act(${p.id},'restart')"`}><i class="bi bi-arrow-clockwise"></i></button><button class="action-link" onclick="details(${p.id})">详情</button><button class="action-link delete-link" onclick="removeProject(${p.id})">删除</button></div></td></tr>`;
 }
 function renderProjects() {
   const target = $("#projects");
@@ -172,7 +211,7 @@ async function loadTmuxSessions() {
       ? tmuxSessions
           .map(
             (session) =>
-              `<article class="tmux-card"><div class="tmux-card-head"><div><b>${esc(session.project_name || "全局 Shell")}</b><small>${esc(session.name)}</small></div><span class="status running">${session.attached ? "已连接" : "后台运行"}</span></div><div class="tmux-meta"><span><i class="bi bi-grid-1x2"></i> ${session.windows} 个窗口</span><span><i class="bi bi-folder2-open"></i> ${esc(session.root_path || "用户主目录")}</span><span><i class="bi bi-clock"></i> ${esc(session.created_at || "-")}</span></div><div class="tmux-actions">${session.project_id ? `<button class="btn btn-outline-primary btn-sm" onclick="navigate('detail/${session.project_id}/terminal')"><i class="bi bi-terminal"></i> 打开终端</button>` : ""}<button class="icon-button danger" title="关闭会话" aria-label="关闭会话" onclick="closeTmuxSession('${esc(session.name)}')"><i class="bi bi-trash3"></i></button></div></article>`,
+              `<article class="tmux-card"><div class="tmux-card-head"><div><b>${esc(session.project_name || "全局 Shell")}</b><small>${esc(session.name)}</small></div><span class="status running">${session.kind === "dependencies" ? "依赖更新中…" : session.attached ? "已连接" : "后台运行"}</span></div><div class="tmux-meta"><span><i class="bi bi-grid-1x2"></i> ${session.windows} 个窗口</span><span><i class="bi bi-folder2-open"></i> ${esc(session.root_path || "用户主目录")}</span><span><i class="bi bi-clock"></i> ${esc(session.created_at || "-")}</span></div><div class="tmux-actions">${session.project_id ? `<button class="btn btn-outline-primary btn-sm" onclick="navigate('detail/${session.project_id}/terminal')"><i class="bi bi-terminal"></i> ${session.kind === "dependencies" ? "查看依赖更新" : "打开终端"}</button>` : ""}<button class="icon-button danger" title="关闭会话" aria-label="关闭会话" onclick="closeTmuxSession('${esc(session.name)}')"><i class="bi bi-trash3"></i></button></div></article>`,
           )
           .join("")
       : '<section class="content-card tmux-empty"><i class="bi bi-terminal"></i><p>暂无项目终端会话</p><small>在项目详情的「终端」Tab 打开一个终端后，会话会显示在这里。</small></section>';
@@ -268,8 +307,8 @@ async function deleteSelectedStorageLogs() {
     toast(e.message, "error");
   }
 }
-function setupProjectTerminal(projectId) {
-  if (!terminal) openTerminal(projectId);
+function setupProjectTerminal(projectId, sessionType = "project") {
+  if (!terminal) openTerminal(projectId, sessionType);
 }
 function closeTerminal() {
   if (terminalSocket) terminalSocket.disconnect();
@@ -356,7 +395,7 @@ function resetTerminalWindow() {
   terminalRows = null;
   resizeTerminal();
 }
-function openTerminal(projectId) {
+function openTerminal(projectId, sessionType = "project") {
   const screen = $("#terminalScreen");
   if (!screen) return;
   const missing = [];
@@ -391,7 +430,7 @@ function openTerminal(projectId) {
   terminalSocket.on("connect", () => {
     terminalConnectionReady = false;
     resizeTerminal();
-    terminalSocket.emit("terminal_open", { project_id: projectId, cols: terminal.cols, rows: terminal.rows });
+    terminalSocket.emit("terminal_open", { project_id: projectId, session_type: sessionType, cols: terminal.cols, rows: terminal.rows });
   });
   terminalSocket.on("terminal_ready", (data) => {
     terminalConnectionReady = true;
@@ -412,9 +451,15 @@ function openTerminal(projectId) {
 async function act(id, a) {
   try {
     const subproject = $("#subprojectSelect")?.value || "";
+    const project = projectList.find((item) => item.id === id);
+    if (a === "update-dependencies" && project?.process?.running) {
+      const confirmed = confirm("更新依赖需要先停止当前运行中的项目。\n\n停止后服务将暂时不可用，依赖更新完成后可手动重新启动项目。\n\n是否继续？");
+      if (!confirmed) return;
+      await api(`/api/projects/${id}/action/stop`, { method: "POST", body: JSON.stringify({ subproject }) });
+    }
     const r = await api(`/api/projects/${id}/action/${a}`, { method: "POST", body: JSON.stringify({ subproject }) });
     if (r.deployment_id) toast("代码更新任务已开始，可在详情页查看日志。");
-    if (r.dependency_update) toast("更新依赖任务已开始，可在运行日志中查看结果。");
+    if (r.dependency_update) toast("更新依赖任务已开始，可在依赖更新终端或日志中查看进度。");
     await refresh();
     if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id);
     if (["start", "restart"].includes(a)) {
@@ -475,7 +520,7 @@ function openEditor(id, fromRoute = false) {
 function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   closeTerminal();
   const x = p.process || {};
-  if (tab === "terminal" && !x.running) tab = "info";
+  if (tab === "terminal" && !x.running && !p.dependency_updating) tab = "info";
   const history =
     p.is_git && deps.length
       ? deps
@@ -492,11 +537,12 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
     ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item.command)}" ${item.command === x.subproject ? "selected" : ""}>${esc(item.display)}</option>`).join("")}</select>`
     : "";
   const actionSize = hasSubprojects ? "" : " btn-sm";
+  const updating = p.dependency_updating;
   const updateDependencies = p.runtime === "node" && String(p.node_dependency_command || "").trim()
-    ? `<button class="btn btn-outline-secondary${actionSize}" onclick="act(${p.id},'update-dependencies')">更新依赖</button>`
+    ? `<button class="btn btn-outline-secondary${actionSize}" ${updating ? "disabled" : `onclick="act(${p.id},'update-dependencies')"`}>${updating ? "依赖更新中…" : "更新依赖"}</button>`
     : "";
   const runActions = !isNew
-    ? `<div class="runtime-actions"><div class="runtime-actions-left ${hasSubprojects ? "has-subprojects" : ""}">${subprojectControl}${x.running ? `<button class="btn btn-outline-danger${actionSize}" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success${actionSize}" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary${actionSize}" onclick="act(${p.id},'restart')"><i class="bi bi-arrow-clockwise"></i> 重启</button>${updateDependencies}</div></div>`
+    ? `<div class="runtime-actions"><div class="runtime-actions-left ${hasSubprojects ? "has-subprojects" : ""}">${subprojectControl}${x.running ? `<button class="btn btn-outline-danger${actionSize}" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i> 停止</button>` : `<button class="btn btn-outline-success${actionSize}" ${updating ? "disabled" : `onclick="act(${p.id},'start')"`}><i class="bi bi-play-circle"></i> 启动</button>`}<button class="btn btn-outline-primary${actionSize}" ${updating ? "disabled" : `onclick="act(${p.id},'restart')"`}><i class="bi bi-arrow-clockwise"></i> 重启</button>${updateDependencies}</div></div>`
     : "";
   const gitInfo = p.is_git ? `<div><small>Git 分支</small><b>${esc(p.branch || "main")}</b></div>` : "";
   const subprojectInfo = hasSubprojects ? `<div><small>当前子项目</small><b>${esc(selectedSubproject?.display || x.subproject || "-")}</b></div>` : "";
@@ -505,22 +551,22 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   const hasDependencyLog = p.runtime === "node" && String(p.node_dependency_command || "").trim();
   const logs = `${p.is_git ? `<p class="muted">Webhook 地址（请妥善保管）</p><div class="log">${esc(webhook)}</div>` : ""}<div class="log-toolbar"><span id="activeLogMeta">运行日志 · ${fileSize(logSummary.runtime_size)}</span><button id="clearLogButton" class="icon-button danger" title="清空运行日志" aria-label="清空运行日志" onclick="clearLog('runtime')"><i class="bi bi-trash3"></i></button></div><div class="tabs"><button onclick="showLog('runtime', ${logSummary.runtime_size})">运行日志</button>${p.is_git ? `<button onclick="showLog('deploy', ${logSummary.deploy_size})">代码更新日志</button>` : ""}${hasDependencyLog ? `<button onclick="showLog('dependencies', ${logSummary.dependencies_size || 0})">依赖更新日志</button>` : ""}</div><pre class="log" id="log">${esc(runtime || "暂无运行日志")}</pre>`;
   const terminal =
-    !isNew && x.running
+    !isNew && (x.running || updating)
       ? `<div class="terminal-toolbar"><span class="muted">tmux 分屏：<code>Ctrl-b</code> 后按 <code>%</code>（纵向）或 <code>"</code>（横向）</span><div class="terminal-display-controls"><span>字号</span><button class="icon-button" title="缩小字号" onclick="adjustTerminalFont(-1)"><i class="bi bi-dash-lg"></i></button><input id="terminalFontSize" class="terminal-number-input" type="number" min="1" value="${terminalFontSize}" onchange="setTerminalFont(this.value)"><button class="icon-button" title="放大字号" onclick="adjustTerminalFont(1)"><i class="bi bi-plus-lg"></i></button><span class="terminal-control-divider"></span><span>终端尺寸</span><button class="icon-button" title="缩窄窗口" onclick="adjustTerminalWindow(-10,0)"><i class="bi bi-arrows-collapse-horizontal"></i></button><input id="terminalColumns" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_COLUMNS}" placeholder="列" onchange="setTerminalWindow()"><span>×</span><input id="terminalRows" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_ROWS}" placeholder="行" onchange="setTerminalWindow()"><button class="icon-button" title="加宽窗口" onclick="adjustTerminalWindow(10,0)"><i class="bi bi-arrows-expand-horizontal"></i></button><button class="icon-button" title="降低窗口" onclick="adjustTerminalWindow(0,-5)"><i class="bi bi-arrows-collapse-vertical"></i></button><button class="icon-button" title="加高窗口" onclick="adjustTerminalWindow(0,5)"><i class="bi bi-arrows-expand-vertical"></i></button><button class="action-link terminal-auto-size" onclick="resetTerminalWindow()">填满面板</button></div></div><section class="terminal-card"><div id="terminalScreen"></div></section>`
       : "";
   const topStartStop = !isNew
     ? x.running
       ? `<button class="icon-button stop-button" title="停止" aria-label="停止" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i></button>`
-      : `<button class="icon-button start-button" title="启动" aria-label="启动" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i></button>`
+      : `<button class="icon-button start-button" title="${updating ? "依赖更新中，不能启动" : "启动"}" aria-label="启动" ${updating ? "disabled" : `onclick="act(${p.id},'start')"`}><i class="bi bi-play-circle"></i></button>`
     : "";
   const topRefresh = !isNew
     ? `<button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})">刷新</button>`
     : "";
   const topDeploy = !isNew && p.is_git ? `<button class="btn btn-primary btn-sm" onclick="act(${p.id},'deploy')">更新代码</button>` : "";
   $("#details").innerHTML =
-    `<div class="detail-topline"><div><b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions">${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div><nav class="detail-tabs"><button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息</button><button class="detail-tab ${tab === "config" ? "active" : ""}" onclick="showDetailTab('config')">项目配置</button><button class="detail-tab ${tab === "logs" ? "active" : ""}" onclick="showDetailTab('logs')">日志</button>${!isNew && x.running ? `<button class="detail-tab ${tab === "terminal" ? "active" : ""}" onclick="showDetailTab('terminal')">终端</button>` : ""}</nav><section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section><section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${configForm(p, isNew)}</section><section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && x.running ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
+    `<div class="detail-topline"><div><b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions">${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div><nav class="detail-tabs"><button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息</button><button class="detail-tab ${tab === "config" ? "active" : ""}" onclick="showDetailTab('config')">项目配置</button><button class="detail-tab ${tab === "logs" ? "active" : ""}" onclick="showDetailTab('logs')">日志</button>${!isNew && (x.running || updating) ? `<button class="detail-tab ${tab === "terminal" ? "active" : ""}" onclick="showDetailTab('terminal')">${updating ? "依赖更新终端" : "终端"}</button>` : ""}</nav><section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section><section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${configForm(p, isNew)}</section><section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && (x.running || updating) ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
   setupProjectOptions(p);
-  if (!isNew && x.running && tab === "terminal") setTimeout(() => setupProjectTerminal(p.id), 0);
+  if (!isNew && (x.running || updating) && tab === "terminal") setTimeout(() => setupProjectTerminal(p.id, updating ? "dependencies" : "project"), 0);
 }
 function accessLinks(ports) {
   if (!ports.length) return '<span class="muted">未检测到监听端口</span>';
@@ -744,3 +790,4 @@ refresh().then(applyRoute);
 window.addEventListener("hashchange", applyRoute);
 window.addEventListener("resize", resizeTerminal);
 setInterval(refresh, 10000);
+setInterval(refreshMemory, 1000);

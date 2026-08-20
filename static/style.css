@@ -258,6 +258,35 @@ body {
   color: var(--muted);
   font-size: 12px;
 }
+.memory-monitor {
+  margin-top: 22px;
+  border: 1px solid #b8b8b8;
+  border-radius: 9px;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 33% 33% 34%;
+  background: #fff;
+  color: #252525;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+}
+.memory-pressure, .memory-summary { border-right: 1px solid #b8b8b8; }
+.memory-pressure { padding: 10px 18px 4px; min-height: 145px; }
+.memory-pressure-title { text-align: center; color: #888; font-size: 16px; font-weight: 650; padding-bottom: 8px; border-bottom: 2px solid #c5c5c5; }
+.memory-chart { height: 100px; padding-top: 28px; }
+.memory-chart svg { width: 100%; height: 58px; display: block; }
+.memory-chart-times { display: flex; justify-content: space-between; color: #969696; font-size: 10px; line-height: 14px; font-variant-numeric: tabular-nums; }
+.memory-chart polygon, .memory-chart polyline { stroke-width: 1; }
+.memory-chart polygon.normal { fill: #b3eeae; stroke: #35c759; }
+.memory-chart polyline.normal { fill: none; stroke: #35c759; }
+.memory-chart polygon.warning { fill: #fbe9b5; stroke: #ff8d2a; }
+.memory-chart polyline.warning { fill: none; stroke: #ff8d2a; }
+.memory-chart polygon.critical { fill: #f7c7c2; stroke: #ff453a; }
+.memory-chart polyline.critical { fill: none; stroke: #ff453a; }
+.memory-summary, .memory-breakdown { padding: 11px 20px; }
+.memory-summary div, .memory-breakdown div { min-height: 32px; display: flex; justify-content: space-between; align-items: center; font-size: 16px; border-bottom: 1px solid #b8b8b8; }
+.memory-summary div:last-child, .memory-breakdown div:last-child { border-bottom: 0; }
+.memory-summary b, .memory-breakdown b { font-weight: 650; }
+.memory-summary span, .memory-breakdown span { font-size: 16px; font-variant-numeric: tabular-nums; }
 .summary-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
@@ -563,8 +592,26 @@ a {
   .system-grid {
     grid-template-columns: 1fr 1fr;
   }
+  .memory-monitor {
+    grid-template-columns: 1fr 1fr;
+  }
+  .memory-breakdown {
+    grid-column: 1 / -1;
+    border-top: 1px solid #b8b8b8;
+  }
 }
 @media (max-width: 640px) {
+  .memory-monitor {
+    grid-template-columns: 1fr;
+  }
+  .memory-pressure,
+  .memory-summary {
+    border-right: 0;
+    border-bottom: 1px solid #b8b8b8;
+  }
+  .memory-breakdown {
+    grid-column: auto;
+  }
   .project-page-heading {
     align-items: stretch;
     flex-direction: column;

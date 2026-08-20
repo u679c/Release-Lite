@@ -99,6 +99,59 @@ def system_disk_usage():
     if os.uname().sysname == "Darwin" and data_volume.is_dir():
         return psutil.disk_usage(str(data_volume))
     return psutil.disk_usage("/")
+def mac_vm_stat():
+    """Return Activity Monitor-style memory buckets when running on macOS."""
+    try:
+        output = subprocess.check_output(["vm_stat"], text=True, stderr=subprocess.DEVNULL)
+        page_size_match = re.search(r"page size of (\d+) bytes", output)
+        page_size = int(page_size_match.group(1)) if page_size_match else 4096
+        pages = {}
+        for name, value in re.findall(r'^([^:\n]+):\s+(\d+)\.', output, re.MULTILINE):
+            pages[name.strip().lower()] = int(value)
+        def size(name): return pages.get(name, 0) * page_size
+        wired = size("pages wired down")
+        compressed = size("pages occupied by compressor")
+        cached = size("pages purgeable") + size("file-backed pages")
+        # 匿名页最接近活动监视器中的 App 内存；系统较旧时回退为已用内存差值。
+        app_memory = size("anonymous pages") or max(0, psutil.virtual_memory().used - wired - compressed)
+        return {"app_memory": app_memory, "wired_memory": wired, "compressed": compressed, "cached": cached}
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+def mac_memory_pressure():
+    """Activity Monitor's pressure signal is based on reclaimable/free pages."""
+    try:
+        output = subprocess.check_output(["memory_pressure", "-Q"], text=True, stderr=subprocess.DEVNULL)
+        match = re.search(r"memory free percentage:\s*(\d+)%", output, re.IGNORECASE)
+        return 100 - int(match.group(1)) if match else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+def mac_pressure_state():
+    """Activity Monitor uses this private kernel pressure state for graph colour."""
+    try:
+        output = subprocess.check_output(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], text=True, stderr=subprocess.DEVNULL)
+        return {1: "normal", 2: "warning", 4: "critical"}.get(int(output.strip()))
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # This kernel key is protected on many macOS releases for non-entitled apps.
+        return None
+def system_memory_details():
+    vm = psutil.virtual_memory()
+    details = mac_vm_stat() if os.uname().sysname == "Darwin" else None
+    if details is None:
+        details = {"app_memory": max(0, vm.used - vm.cached - vm.buffers), "wired_memory": 0, "compressed": 0, "cached": vm.cached}
+    try:
+        swap_used = psutil.swap_memory().used
+    except (psutil.Error, OSError):
+        # 某些受限运行环境不允许读取 swap 计数，其他内存数据仍可正常展示。
+        swap_used = 0
+    # 活动监视器的“已使用内存”以可回收的缓存文件为界，而 psutil.used 是跨平台估算值。
+    is_macos = os.uname().sysname == "Darwin"
+    used = max(0, vm.total - details["cached"]) if is_macos and details else vm.used
+    pressure = mac_memory_pressure() if is_macos else None
+    native_state = mac_pressure_state() if is_macos else None
+    # 截图中黄色/绿色转换与可回收缓存约 15% 的物理内存高度吻合；红色保留给极低余量。
+    cached_ratio = details["cached"] / vm.total if vm.total else 0
+    pressure_state = native_state or ("critical" if cached_ratio < .10 else "warning" if cached_ratio < .16 else "normal")
+    return {"total": vm.total, "used": used, "cached": details["cached"], "app_memory": details["app_memory"], "wired_memory": details["wired_memory"], "compressed": details["compressed"], "swap_used": swap_used, "pressure": vm.percent if pressure is None else pressure, "pressure_state": pressure_state, "pressure_source": "macos" if native_state else "estimated"}
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -271,6 +324,8 @@ def subproject_options(project):
         options.append({"command": command, "label": label[0] if label else "", "display": value})
     return options
 def start_project(project, operator="web", subproject=None):
+    if dependency_update_running(project["id"]):
+        raise RuntimeError("依赖更新中，暂时不能启动或重启项目")
     root = safe_project_path(project); state = process_info(project)
     if state["process_alive"]: raise RuntimeError("项目进程仍在运行，无法重复启动")
     selected_subproject = ""
@@ -347,8 +402,8 @@ def update_node_dependencies_worker(project_id):
         if not command: raise RuntimeError("请先填写更新依赖命令")
         root = safe_project_path(project)
         env = os.environ.copy(); env.update(env_dict(project["env_vars"])); env = apply_runtime_env(project, root, env)
-        append_log(logfile, f"\n--- update dependencies {log_now()} ---\n")
-        run_command(command, root, env, logfile, "更新 Node.js 依赖")
+        append_log(logfile, f"\n--- update dependencies {log_now()} ---\n$ 更新 Node.js 依赖: {command}\n")
+        run_dependency_terminal(project, root, env, logfile, command)
         audit(project_id, "更新依赖成功", command, "dependencies")
     except Exception as exc:
         message = str(exc)
@@ -364,6 +419,12 @@ def queue_node_dependencies(project):
         if project["id"] in deploy_locks or project["id"] in dependency_locks: raise RuntimeError("该项目已有更新任务在执行")
         task = threading.Thread(target=update_node_dependencies_worker, args=(project["id"],), daemon=True)
         dependency_locks[project["id"]] = task; task.start()
+def dependency_update_running(project_id):
+    with deploy_locks_guard:
+        return project_id in dependency_locks
+def ensure_project_actions_available(project_id, action):
+    if action in {"start", "restart"} and dependency_update_running(project_id):
+        raise RuntimeError("依赖更新中，暂时不能启动或重启项目")
 def discover_scripts(root_path):
     try:
         root = Path(root_path).expanduser().resolve(); scripts=[]
@@ -381,9 +442,15 @@ def index(): return render_template("index.html")
 @app.get("/api/overview")
 def overview():
     projects = rows("SELECT * FROM projects ORDER BY name")
-    for p in projects: p["process"] = process_info(p)
-    vm, disk = psutil.virtual_memory(), system_disk_usage()
-    return jsonify({"projects": projects, "system": {"hostname": socket.gethostname(), "local_ip": server_ip(), "os": f"{os.uname().sysname} {os.uname().release}", "cpu_count": psutil.cpu_count(), "cpu_percent": psutil.cpu_percent(), "memory_total": vm.total, "memory_used": vm.used, "memory_percent": vm.percent, "disk_total": disk.total, "disk_used": disk.used, "disk_percent": disk.percent, "network": psutil.net_io_counters()._asdict()}})
+    with deploy_locks_guard:
+        updating_dependencies = set(dependency_locks)
+    for p in projects:
+        p["process"] = process_info(p)
+        p["dependency_updating"] = p["id"] in updating_dependencies
+    memory, disk = system_memory_details(), system_disk_usage()
+    return jsonify({"projects": projects, "system": {"hostname": socket.gethostname(), "local_ip": server_ip(), "os": f"{os.uname().sysname} {os.uname().release}", "cpu_count": psutil.cpu_count(), "cpu_percent": psutil.cpu_percent(), "memory_total": memory["total"], "memory_used": memory["used"], "memory_percent": memory["pressure"], "memory": memory, "disk_total": disk.total, "disk_used": disk.used, "disk_percent": disk.percent, "network": psutil.net_io_counters()._asdict()}})
+@app.get("/api/system/memory")
+def system_memory(): return jsonify(system_memory_details())
 @app.get("/api/projects")
 def list_projects(): return jsonify(rows("SELECT * FROM projects ORDER BY name"))
 @app.get("/api/node-versions")
@@ -416,6 +483,7 @@ def action(project_id,action):
     data = request.get_json(silent=True) or {}
     subproject = (data.get("subproject") or "").strip()
     try:
+        ensure_project_actions_available(project_id, action)
         if action=="start": start_project(p, subproject=subproject)
         elif action=="stop": stop_project(p)
         elif action=="restart": stop_project(p); start_project(p, subproject=subproject); audit(project_id,"重启",p["name"])
@@ -534,12 +602,16 @@ def monitor():
     while True:
         time.sleep(20)
         for p in rows("SELECT * FROM projects WHERE auto_restart=1"):
+            if dependency_update_running(p["id"]):
+                continue
             state=one("SELECT * FROM process_state WHERE project_id=?",(p["id"],))
             if state and state["expected_running"] and not alive(state["pid"]):
                 try: start_project(p,"monitor"); audit(p["id"],"异常自动重启",f"原 PID {state['pid']}","monitor")
                 except Exception as e:audit(p["id"],"自动重启失败",str(e),"monitor")
 def terminal_session_name(project_id):
     return f"release-lite-project-{project_id}" if project_id else "release-lite-shell"
+def dependency_terminal_session_name(project_id):
+    return f"release-lite-dependencies-{project_id}"
 def terminal_cwd(project_id):
     return safe_project_path(project_or_404(project_id)) if project_id else Path.home()
 def launch_project_terminal(project, root, env, logfile, command):
@@ -567,6 +639,31 @@ def launch_project_terminal(project, root, env, logfile, command):
         raise
     close_project_terminal(project["id"])
     raise RuntimeError("项目终端未能启动，请查看运行日志")
+def run_dependency_terminal(project, root, env, logfile, command):
+    if not shutil.which("tmux"):
+        raise RuntimeError("未安装 tmux。请先安装 tmux 后再更新依赖。")
+    name = dependency_terminal_session_name(project["id"])
+    subprocess.run(["tmux", "kill-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
+    exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
+    result_file = LOG_DIR / f"project-{project['id']}-dependencies.result"
+    channel = f"release-lite-dependencies-{project['id']}-{uuid.uuid4().hex}"
+    try: result_file.unlink()
+    except FileNotFoundError: pass
+    shell_command = f"{exports}{command}; status=$?; printf '%s' \"$status\" > {shlex.quote(str(result_file))}; tmux wait-for -S {shlex.quote(channel)}; exit \"$status\""
+    subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
+    try:
+        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"awk '{{ print strftime(\"[%Y-%m-%d %H:%M:%S]\"), $0; fflush(); }}' >> {shlex.quote(str(logfile))}"], check=True)
+        while not result_file.exists():
+            if not tmux_session_exists(name):
+                raise RuntimeError("依赖更新终端已关闭")
+            time.sleep(.1)
+        status = result_file.read_text(encoding="utf-8").strip()
+        if status != "0": raise RuntimeError(f"更新 Node.js 依赖失败，退出码 {status or '-'}")
+    finally:
+        try: result_file.unlink()
+        except FileNotFoundError: pass
 def close_project_terminal(project_id):
     if not shutil.which("tmux"):
         return False
@@ -587,14 +684,19 @@ def managed_tmux_sessions():
         name, created_at, windows, attached = (line.split("\t") + ["", "", "", ""])[:4]
         if not name.startswith("release-lite-"):
             continue
-        project_id = None
+        project_id = None; kind = "shell"
         if name.startswith("release-lite-project-"):
+            kind = "project"
+            try: project_id = int(name.rsplit("-", 1)[1])
+            except ValueError: continue
+        elif name.startswith("release-lite-dependencies-"):
+            kind = "dependencies"
             try: project_id = int(name.rsplit("-", 1)[1])
             except ValueError: continue
         project = one("SELECT id,name,root_path FROM projects WHERE id=?", (project_id,)) if project_id else None
         sessions.append({
             "name": name, "created_at": created_at, "windows": int(windows or 0), "attached": bool(int(attached or 0)),
-            "project_id": project_id, "project_name": project["name"] if project else None,
+            "project_id": project_id, "project_name": project["name"] if project else None, "kind": kind,
             "root_path": project["root_path"] if project else str(Path.home()),
         })
     return sessions
@@ -611,7 +713,7 @@ def tmux_session_delete(session_name):
     session = managed.get(session_name)
     if not session:
         abort(404)
-    if session["project_id"]:
+    if session["kind"] == "project":
         stop_project(project_or_404(session["project_id"]), "tmux")
     else:
         subprocess.run(["tmux", "kill-session", "-t", session_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -644,9 +746,15 @@ def terminal_open(data):
         if not project_id:
             raise RuntimeError("请从项目详情中打开终端")
         project = project_or_404(project_id)
-        if not process_info(project)["running"]:
-            raise RuntimeError("项目未运行，请先启动项目")
-        session_name = terminal_session_name(project_id)
+        session_type = (data.get("session_type") or "project") if data else "project"
+        if session_type == "dependencies":
+            if not dependency_update_running(project_id):
+                raise RuntimeError("当前没有依赖更新任务")
+            session_name = dependency_terminal_session_name(project_id)
+        else:
+            if not process_info(project)["running"]:
+                raise RuntimeError("项目未运行，请先启动项目")
+            session_name = terminal_session_name(project_id)
         if not tmux_session_exists(session_name):
             raise RuntimeError("项目终端会话不存在，请重启项目后重试")
         rows = max(1, int(data.get("rows", 24)))
