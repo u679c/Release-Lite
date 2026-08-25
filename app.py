@@ -11,6 +11,7 @@ import signal
 import socket
 import sqlite3
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -270,6 +271,17 @@ def managed_log_entries(project_id=None, kind=None, sort="size_desc"):
     return entries
 def append_log(path, text):
     with open(path, "a", encoding="utf-8") as f: f.write(text)
+def pane_log_command(logfile):
+    """Return a portable, line-buffered command for tmux pipe-pane."""
+    script = """import sys
+from datetime import datetime
+
+with open(sys.argv[1], 'a', encoding='utf-8') as output:
+    for line in sys.stdin:
+        output.write(f'[{datetime.now():%Y-%m-%d %H:%M:%S}] {line}')
+        output.flush()
+"""
+    return f"{shlex.quote(sys.executable)} -u -c {shlex.quote(script)} {shlex.quote(str(logfile))}"
 def run_command(command, cwd, env, logfile, title):
     append_log(logfile, f"\n$ {title}: {command}\n")
     p = subprocess.Popen(command, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -625,10 +637,14 @@ def launch_project_terminal(project, root, env, logfile, command):
     # 确保 pnpm/corepack 与项目所选的 Node 版本一致。
     runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
     exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
-    shell_command = f"{exports}exec {command}"
+    # 新建 tmux 会话会立刻执行命令；若稍后才 pipe-pane，快速启动/退出的
+    # 命令输出会完全错过。先让 pane 等待，再连接日志管道并显式放行。
+    channel = f"release-lite-project-{project['id']}-{uuid.uuid4().hex}"
+    shell_command = f"tmux wait-for {shlex.quote(channel)}; {exports}exec {command}"
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
     try:
-        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"awk '{{ print strftime(\"[%Y-%m-%d %H:%M:%S]\"), $0; fflush(); }}' >> {shlex.quote(str(logfile))}"], check=True)
+        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, pane_log_command(logfile)], check=True)
+        subprocess.run(["tmux", "wait-for", "-S", channel], check=True)
         for _ in range(10):
             result = subprocess.run(["tmux", "display-message", "-p", "-t", name, "#{pane_pid}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
             if result.returncode == 0 and result.stdout.strip().isdigit():
@@ -651,10 +667,12 @@ def run_dependency_terminal(project, root, env, logfile, command):
     channel = f"release-lite-dependencies-{project['id']}-{uuid.uuid4().hex}"
     try: result_file.unlink()
     except FileNotFoundError: pass
-    shell_command = f"{exports}{command}; status=$?; printf '%s' \"$status\" > {shlex.quote(str(result_file))}; tmux wait-for -S {shlex.quote(channel)}; exit \"$status\""
+    start_channel = f"release-lite-dependencies-start-{project['id']}-{uuid.uuid4().hex}"
+    shell_command = f"tmux wait-for {shlex.quote(start_channel)}; {exports}{command}; status=$?; printf '%s' \"$status\" > {shlex.quote(str(result_file))}; tmux wait-for -S {shlex.quote(channel)}; exit \"$status\""
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
     try:
-        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, f"awk '{{ print strftime(\"[%Y-%m-%d %H:%M:%S]\"), $0; fflush(); }}' >> {shlex.quote(str(logfile))}"], check=True)
+        subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, pane_log_command(logfile)], check=True)
+        subprocess.run(["tmux", "wait-for", "-S", start_channel], check=True)
         while not result_file.exists():
             if not tmux_session_exists(name):
                 raise RuntimeError("依赖更新终端已关闭")

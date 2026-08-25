@@ -128,6 +128,11 @@ function status(p) {
   if (p.dependency_updating) return `<span class="status running">依赖更新中…</span>`;
   return `<span class="status ${p.process?.running ? "running" : "stopped"}">${p.process?.running ? "运行中" : "已停止"}</span>`;
 }
+function currentDetailTab(id) {
+  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  const tab = parts[2];
+  return parts[0] === "detail" && Number(parts[1]) === Number(id) && ["info", "config", "logs", "terminal"].includes(tab) ? tab : "info";
+}
 async function refresh() {
   try {
     const d = await api("/api/overview");
@@ -452,6 +457,7 @@ async function act(id, a) {
   try {
     const subproject = $("#subprojectSelect")?.value || "";
     const project = projectList.find((item) => item.id === id);
+    const detailTab = currentDetailTab(id);
     if (a === "update-dependencies" && project?.process?.running) {
       const confirmed = confirm("更新依赖需要先停止当前运行中的项目。\n\n停止后服务将暂时不可用，依赖更新完成后可手动重新启动项目。\n\n是否继续？");
       if (!confirmed) return;
@@ -461,11 +467,11 @@ async function act(id, a) {
     if (r.deployment_id) toast("代码更新任务已开始，可在详情页查看日志。");
     if (r.dependency_update) toast("更新依赖任务已开始，可在依赖更新终端或日志中查看进度。");
     await refresh();
-    if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id);
+    if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id, detailTab, true);
     if (["start", "restart"].includes(a)) {
       setTimeout(async () => {
         await refresh();
-        if ($("#detail-page").classList.contains("active")) details(id, "info", true);
+        if ($("#detail-page").classList.contains("active")) details(id, detailTab, true);
       }, 1200);
     }
   } catch (e) {
@@ -555,9 +561,11 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
       ? `<div class="terminal-toolbar"><span class="muted">tmux 分屏：<code>Ctrl-b</code> 后按 <code>%</code>（纵向）或 <code>"</code>（横向）</span><div class="terminal-display-controls"><span>字号</span><button class="icon-button" title="缩小字号" onclick="adjustTerminalFont(-1)"><i class="bi bi-dash-lg"></i></button><input id="terminalFontSize" class="terminal-number-input" type="number" min="1" value="${terminalFontSize}" onchange="setTerminalFont(this.value)"><button class="icon-button" title="放大字号" onclick="adjustTerminalFont(1)"><i class="bi bi-plus-lg"></i></button><span class="terminal-control-divider"></span><span>终端尺寸</span><button class="icon-button" title="缩窄窗口" onclick="adjustTerminalWindow(-10,0)"><i class="bi bi-arrows-collapse-horizontal"></i></button><input id="terminalColumns" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_COLUMNS}" placeholder="列" onchange="setTerminalWindow()"><span>×</span><input id="terminalRows" class="terminal-number-input terminal-dimension-input" type="number" min="1" max="${TERMINAL_MAX_ROWS}" placeholder="行" onchange="setTerminalWindow()"><button class="icon-button" title="加宽窗口" onclick="adjustTerminalWindow(10,0)"><i class="bi bi-arrows-expand-horizontal"></i></button><button class="icon-button" title="降低窗口" onclick="adjustTerminalWindow(0,-5)"><i class="bi bi-arrows-collapse-vertical"></i></button><button class="icon-button" title="加高窗口" onclick="adjustTerminalWindow(0,5)"><i class="bi bi-arrows-expand-vertical"></i></button><button class="action-link terminal-auto-size" onclick="resetTerminalWindow()">填满面板</button></div></div><section class="terminal-card"><div id="terminalScreen"></div></section>`
       : "";
   const topStartStop = !isNew
-    ? x.running
+    ? updating
+      ? `<button class="icon-button start-button" title="依赖更新中，不能启动" aria-label="依赖更新中，不能启动" disabled><i class="bi bi-play-circle"></i></button>`
+      : x.running
       ? `<button class="icon-button stop-button" title="停止" aria-label="停止" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i></button>`
-      : `<button class="icon-button start-button" title="${updating ? "依赖更新中，不能启动" : "启动"}" aria-label="启动" ${updating ? "disabled" : `onclick="act(${p.id},'start')"`}><i class="bi bi-play-circle"></i></button>`
+      : `<button class="icon-button start-button" title="启动" aria-label="启动" onclick="act(${p.id},'start')"><i class="bi bi-play-circle"></i></button>`
     : "";
   const topRefresh = !isNew
     ? `<button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})">刷新</button>`
