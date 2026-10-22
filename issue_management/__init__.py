@@ -77,6 +77,23 @@ def update_bug_status(record_id):
         return jsonify(error=str(exc)), 502
 
 
+@blueprint.post("/api/issues/bugs/status")
+def update_bug_statuses():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="状态更新参数格式不正确"), 400
+    try:
+        return jsonify(current_app.extensions["issue_management"].update_bug_statuses(
+            payload.get("records"), payload.get("status"),
+        ))
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
+    except IssueBusyError as exc:
+        return jsonify(error=str(exc)), 409
+    except SyncError as exc:
+        return jsonify(error=str(exc)), 502
+
+
 @blueprint.post("/api/issues/bugs/<record_id>/discussion")
 def create_bug_discussion(record_id):
     try:

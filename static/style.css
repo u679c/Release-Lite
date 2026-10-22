@@ -222,11 +222,9 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
+  /* margin-bottom: 20px; */
 }
-.page-heading {
-  margin-bottom: 24px;
-}
+
 .project-page-heading {
   align-items: center;
 }

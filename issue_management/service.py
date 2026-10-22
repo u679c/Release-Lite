@@ -41,7 +41,7 @@ TEST_DEADLINE_EXEMPT_STATUSES = {
     "测试中", "用例检查", "测试完成", "预发验收", "待上线",
     "线上验收", "已上线", "已取消", "无需测试", "已完成",
 }
-BUG_TARGET_STATUSES = {"已修复待发布", "已修复"}
+BUG_TARGET_STATUSES = {"处理中", "已修复待发布", "已修复"}
 BUG_STAGES = {"all", "pending", "release", "fixed"}
 ATTACHMENT_MEDIA_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
@@ -598,12 +598,27 @@ class IssueService:
                 self.submitting = False
 
     def update_bug_status(self, record_id, status, expected_status):
-        if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
-            raise ValueError("bug 记录 ID 不正确")
+        result = self.update_bug_statuses([{"id": record_id, "expected_status": expected_status}], status)
+        return {"id": record_id, "status": result["status"], "warning": result["warning"]}
+
+    def update_bug_statuses(self, records, status):
+        if not isinstance(records, list) or not 1 <= len(records) <= PAGE_SIZE:
+            raise ValueError(f"请选择 1 至 {PAGE_SIZE} 条 bug")
         if not isinstance(status, str) or status not in BUG_TARGET_STATUSES:
-            raise ValueError("只支持修改为“已修复待发布”或“已修复”")
-        if not isinstance(expected_status, str):
-            raise ValueError("缺少当前 bug 状态，请刷新后重试")
+            raise ValueError("只支持修改为“处理中”、“已修复待发布”或“已修复”")
+        expected = {}
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("bug 状态更新参数格式不正确")
+            record_id = record.get("id")
+            if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
+                raise ValueError("bug 记录 ID 不正确")
+            if record_id in expected:
+                raise ValueError("不能重复选择同一条 bug")
+            if not isinstance(record.get("expected_status"), str):
+                raise ValueError("缺少当前 bug 状态，请刷新后重试")
+            expected[record_id] = record["expected_status"]
+        record_ids = list(expected)
         with self.lock:
             if self.syncing or self.submitting:
                 raise IssueBusyError("正在同步数据或更新记录，请稍后重试。")
@@ -611,22 +626,24 @@ class IssueService:
         write_attempted = False
         try:
             with tempfile.TemporaryDirectory(prefix="release-lite-bug-status-") as directory:
-                rows = self._read_table("bugs", directory, None, record_ids=[record_id], artifact_prefix="before-")
-                if len(rows) != 1 or rows[0]["id"] != record_id:
+                rows = self._read_table("bugs", directory, None, record_ids=record_ids, artifact_prefix="before-")
+                current = {row["id"]: text(row.get("status")) for row in rows}
+                if len(rows) != len(expected) or current.keys() != expected.keys():
                     raise ValueError("bug 不存在或无权访问")
-                current_status = text(rows[0].get("status"))
-                if current_status != status:
-                    if current_status != expected_status:
-                        with self.lock:
-                            self._invalidate_snapshot("bugs")
-                        raise IssueBusyError("bug 状态已被其他操作修改，请同步后重新确认。")
+                if any(current[record_id] not in (status, expected_status) for record_id, expected_status in expected.items()):
+                    with self.lock:
+                        self._invalidate_snapshot("bugs")
+                    raise IssueBusyError("bug 状态已被其他操作修改，请同步后重新确认。")
+                updates = [record_id for record_id in record_ids if current[record_id] != status]
+                if updates:
                     config = TABLES["bugs"]
-                    payload = {"update_records": {record_id: {config["fields"]["status"]: [status]}}}
+                    payload = {"update_records": {record_id: {config["fields"]["status"]: [status]} for record_id in updates}}
                     write_attempted = True
                     self._run(["+record-batch-update", "--base-token", BASE_TOKEN, "--table-id", config["id"], "--json", json.dumps(payload, ensure_ascii=False)], directory)
                     for attempt in range(3):
-                        verified = self._read_table("bugs", directory, None, record_ids=[record_id], artifact_prefix=f"verify-{attempt}-")
-                        if len(verified) == 1 and verified[0]["id"] == record_id and text(verified[0].get("status")) == status:
+                        verified = self._read_table("bugs", directory, None, record_ids=record_ids, artifact_prefix=f"verify-{attempt}-")
+                        confirmed = {row["id"]: text(row.get("status")) for row in verified}
+                        if len(verified) == len(expected) and confirmed.keys() == expected.keys() and all(value == status for value in confirmed.values()):
                             break
                         if attempt < 2:
                             time.sleep(0.5)
@@ -635,13 +652,13 @@ class IssueService:
             warning = ""
             with self.lock:
                 if self.snapshot is not None:
-                    snapshot = {**self.snapshot, "bugs": [{**row, "status": status} if row["id"] == record_id else row for row in self.snapshot["bugs"]]}
+                    snapshot = {**self.snapshot, "bugs": [{**row, "status": status} if row["id"] in expected else row for row in self.snapshot["bugs"]]}
                     self.snapshot = snapshot
                     try:
                         self._write_snapshot(snapshot)
                     except OSError:
                         warning = "飞书状态已更新，本地缓存保存失败，请重新同步数据。"
-            return {"id": record_id, "status": status, "warning": warning}
+            return {"updated_count": len(expected), "status": status, "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
                 with self.lock:

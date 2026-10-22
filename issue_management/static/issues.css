@@ -330,9 +330,8 @@
 }
 .issue-project-tab {
   flex: 0 0 auto;
-  padding: 10px 18px;
+  padding: 6px 12px;
   border: 0;
-  border-bottom: 2px solid transparent;
   background: transparent;
   color: var(--muted);
   font-size: 13px;
@@ -343,7 +342,9 @@
 }
 .issue-project-tab.active {
   color: var(--blue);
-  border-bottom-color: var(--blue);
+  background-color: #deecff;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
   font-weight: 600;
 }
 .issue-metrics {
@@ -413,6 +414,9 @@
 .issue-chart-row:hover {
   color: var(--blue);
 }
+.issue-chart-status-row {
+  grid-template-columns: 112px 1fr 40px;
+}
 .issue-chart-row > span:first-child {
   white-space: nowrap;
   overflow: hidden;
@@ -443,6 +447,26 @@
 .issue-list-card h2 {
   font-size: 17px;
   margin-bottom: 6px;
+}
+.issue-list-heading,
+.issue-list-heading-actions,
+.issue-bug-batch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.issue-list-heading-actions {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+.issue-bug-batch-actions {
+  justify-content: flex-end;
+  gap: 8px;
+}
+.issue-bug-batch-status {
+  margin: 0 22px 14px;
+  overflow-wrap: anywhere;
 }
 .issue-version-lists {
   display: grid;
@@ -654,6 +678,35 @@
 .issue-status-tag[data-status="已完成"] {
   background: #d0d3d6;
 }
+.issue-status-tag[data-status="新建"] {
+  background: #ffe6cc;
+}
+.issue-status-tag[data-status="处理中"] {
+  background: #e1e9ff;
+}
+.issue-status-tag[data-status="重新打开"] {
+  background: #ffe3e3;
+}
+.issue-status-tag[data-status="已修复待发布"] {
+  background: #c4effb;
+}
+.issue-status-tag[data-status="已修复"] {
+  background: #cef5ce;
+}
+.issue-status-tag[data-status="已关闭"],
+.issue-status-tag[data-status="无需解决"],
+.issue-status-tag[data-status="已取消"] {
+  background: #eff0f1;
+}
+.issue-status-tag[data-status="挂起"] {
+  background: #eee3ff;
+}
+.issue-status-tag[data-status="重复bug"] {
+  background: #fcecbf;
+}
+.issue-status-tag[data-status="转需求"] {
+  background: #b8e7df;
+}
 .issue-test-deadline {
   display: inline-block;
   border-radius: 5px;
@@ -757,11 +810,21 @@
   padding-top: 18px;
   margin-top: 24px;
 }
+.issue-bug-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 22px 18px;
+}
+.issue-bug-toolbar > .issue-bug-batch-actions {
+  margin-left: auto;
+}
 .issue-bug-stages {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 0 22px 18px;
 }
 .issue-bug-stage {
   display: inline-flex;
@@ -769,12 +832,12 @@
   gap: 8px;
   border: 1px solid transparent;
   border-radius: 7px;
-  padding: 8px 12px;
+  padding: 2px 6px;
   background: #f8fafc;
   color: var(--muted);
   font-size: 12px;
 }
-.issue-bug-stage > span {
+.issue-bug-stage-count {
   padding: 0 6px;
   border-radius: 5px;
   background: #e9edf2;
@@ -786,7 +849,7 @@
   background: var(--blue-soft);
   border-color: #d5e2ff;
 }
-.issue-bug-stage.active > span {
+.issue-bug-stage.active > .issue-bug-stage-count {
   background: #dce8ff;
 }
 .issue-queue {
@@ -796,7 +859,7 @@
   display: grid;
   grid-template-columns: minmax(0, var(--issue-queue-fr, 1.05fr)) 12px minmax(0, var(--issue-desk-fr, 1fr));
   border-top: 1px solid var(--line);
-  height: clamp(520px, calc(100dvh - 340px), 840px);
+  height: clamp(520px, calc(100dvh - 224px), 840px);
 }
 .issue-workspace-resizer {
   position: relative;
@@ -893,12 +956,40 @@ body.issue-workspace-resizing * {
 .is-bug-workspace .issue-table tbody tr:hover > td {
   background: #f8faff;
 }
-.is-bug-workspace .issue-table .issue-bug-selected > td {
+.is-bug-workspace .issue-table .issue-bug-selected > td,
+.is-bug-workspace .issue-table .issue-bug-checked > td {
   background: var(--blue-soft);
   box-shadow: none;
 }
 .is-bug-workspace .issue-table .issue-bug-selected > td:first-child {
   box-shadow: inset 3px 0 var(--blue);
+}
+.issue-bug-title-heading,
+.issue-bug-row-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.issue-bug-title-heading {
+  align-items: center;
+}
+.issue-bug-checkbox {
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  margin: 3px 0 0;
+  accent-color: var(--blue);
+  cursor: pointer;
+}
+.issue-bug-title-heading .issue-bug-checkbox {
+  margin-top: 0;
+}
+.issue-bug-checkbox:disabled {
+  cursor: default;
+}
+.issue-bug-row-content {
+  flex: 1;
+  min-width: 0;
 }
 .issue-bug-row-title {
   display: -webkit-box;
@@ -1007,6 +1098,21 @@ body.issue-workspace-resizing * {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.issue-desk-title button {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  white-space: inherit;
+  overflow-wrap: anywhere;
+  cursor: copy;
+}
+.issue-desk-title button:hover {
+  color: var(--blue);
+}
 .issue-bug-detail .issue-detail-grid {
   gap: 16px;
   margin: 22px 0;
@@ -1052,6 +1158,11 @@ body.issue-workspace-resizing * {
 }
 .issue-media-image {
   display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   cursor: zoom-in;
 }
 .issue-media img {
@@ -1151,14 +1262,6 @@ body.issue-workspace-resizing * {
 #issueBugActionStatus:empty {
   display: none;
 }
-.issue-status-tag[data-status="已修复待发布"] {
-  color: #93370d;
-  background: #fef0c7;
-}
-.issue-status-tag[data-status="已修复"] {
-  color: #027a48;
-  background: #d1fadf;
-}
 @media (max-width: 1050px) {
   .issue-workspace.is-bug-workspace {
     grid-template-columns: 1fr;
@@ -1179,7 +1282,7 @@ body.issue-workspace-resizing * {
   }
 }
 @media (max-width: 480px) {
-  .issue-bug-stages {
+  .issue-bug-toolbar {
     padding-left: 12px;
     padding-right: 12px;
   }

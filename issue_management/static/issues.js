@@ -30,6 +30,9 @@ window.IssueManagement = (() => {
     submittingBug = null,
     bugDetailKey = "";
   let creatingDiscussion = "";
+  const selectedBugs = new Set();
+  let bugSelectionScope = "";
+  let attachmentViewer = null;
   const collapsedRequirements = new Set();
   const collapsedVersions = new Set();
   const submittingRequirements = new Set();
@@ -178,12 +181,39 @@ window.IssueManagement = (() => {
             name = escape(item.name || "附件");
           const preview =
             item.media_kind === "image"
-              ? `<a class="issue-media-image" href="${source}" target="_blank" rel="noopener noreferrer" aria-label="打开原图：${name}"><img src="${source}" alt="${name}" loading="lazy" decoding="async" data-attachment-media></a>`
+              ? `<button class="issue-media-image" type="button" data-preview-image aria-label="预览图片：${name}"><img src="${source}" alt="${name}" loading="lazy" decoding="async" data-attachment-media></button>`
               : `<video src="${source}" controls playsinline preload="none" aria-label="${name}" data-attachment-media>浏览器不支持播放此视频。</video>`;
-          return `<figure class="issue-media">${preview}<figcaption><i class="bi bi-${item.media_kind === "image" ? "image" : "play-circle"}" aria-hidden="true"></i><span>${name}</span>${item.media_kind === "image" ? '<small class="muted">点击查看原图</small>' : ""}</figcaption><div class="issue-media-error" data-attachment-error hidden><p>附件加载失败或浏览器不支持此格式。</p><button type="button" class="btn btn-outline-secondary btn-sm" data-retry-attachment>重试</button> ${safeLink(row.source_url, "在飞书查看")}</div></figure>`;
+          return `<figure class="issue-media">${preview}<figcaption><i class="bi bi-${item.media_kind === "image" ? "image" : "play-circle"}" aria-hidden="true"></i><span>${name}</span>${item.media_kind === "image" ? '<small class="muted">点击预览图片</small>' : ""}</figcaption><div class="issue-media-error" data-attachment-error hidden><p>附件加载失败或浏览器不支持此格式。</p><button type="button" class="btn btn-outline-secondary btn-sm" data-retry-attachment>重试</button> ${safeLink(row.source_url, "在飞书查看")}</div></figure>`;
         })
         .join("") || '<span class="muted">暂无图片或视频附件</span>'
     );
+  }
+  function previewAttachment(button) {
+    if (typeof window.Viewer !== "function") {
+      toast("图片预览组件加载失败，请刷新页面重试", "error");
+      return;
+    }
+    const buttons = [...button.closest(".issue-desk-attachments").querySelectorAll("[data-preview-image]")];
+    // Keep the gallery independent of desk updates during background synchronization.
+    const gallery = document.createElement("div");
+    for (const item of buttons) {
+      const source = item.querySelector("img");
+      const image = document.createElement("img");
+      image.src = source.src;
+      image.alt = source.alt;
+      gallery.appendChild(image);
+    }
+    attachmentViewer?.destroy();
+    const viewer = new window.Viewer(gallery, {
+      toolbar: { zoomIn: true, zoomOut: true, oneToOne: true, reset: true, prev: true, next: true, rotateLeft: true, rotateRight: true },
+      hidden() {
+        viewer.destroy();
+        if (attachmentViewer === viewer) attachmentViewer = null;
+        if (button.isConnected) button.focus({ preventScroll: true });
+      },
+    });
+    attachmentViewer = viewer;
+    viewer.view(buttons.indexOf(button));
   }
   async function request(url, options) {
     const response = await fetch(url, options);
@@ -256,15 +286,17 @@ window.IssueManagement = (() => {
     const cacheNote = sync.stale ? `当前显示缓存（覆盖范围：${coverage}）。${sync.syncing ? "最新数据正在后台同步。" : "请同步获取最新数据。"} ` : "";
     status.classList.toggle("issue-sync-error", Boolean(sync.error));
     // const rangeNote = range ? `创建时间：${range.created_from} 至 ${range.created_to}（含起止日期）。` : "";
-    status.textContent = cacheNote + (sync.error
-      ? `${sync.error}${sync.ready ? " 当前展示上次成功同步的数据。" : ""} ${stamp}`
-      : `${sync.syncing ? `${sync.progress || "正在同步…"} ` : ""}${stamp}`);
+    status.textContent =
+      cacheNote + (sync.error ? `${sync.error}${sync.ready ? " 当前展示上次成功同步的数据。" : ""} ${stamp}` : `${sync.syncing ? `${sync.progress || "正在同步…"} ` : ""}${stamp}`);
     find("#issueSyncButton").disabled = sync.syncing || sync.submitting || submittingRequirements.size > 0 || Boolean(submittingBug || creatingDiscussion);
     find("#issueSyncButton").textContent = sync.syncing ? "同步中…" : "同步数据";
   }
   async function load() {
     clearTimeout(poll);
     const current = ++sequence;
+    const selectionScope = bugSelectionKey();
+    if (selectionScope !== bugSelectionScope) selectedBugs.clear();
+    bugSelectionScope = selectionScope;
     if (filters.created_from !== undefined && (!filters.created_from || !filters.created_to || filters.created_from > filters.created_to)) {
       root.setAttribute("aria-busy", "false");
       find("#issueContent").hidden = true;
@@ -276,6 +308,7 @@ window.IssueManagement = (() => {
     }
     find("#issueFilterError").hidden = true;
     root.setAttribute("aria-busy", "true");
+    renderBugSelection();
     try {
       const parameters = new URLSearchParams({ kind, page });
       if (allowStaleCache) parameters.set("allow_stale", "1");
@@ -291,8 +324,16 @@ window.IssueManagement = (() => {
       setStatus(result.sync);
       if (result.sync.ready) {
         if (!result.sync.stale) allowStaleCache = false;
+        if (kind === "bugs" && bugStage !== "all" && !(result.bug_stages[bugStage] > 0)) {
+          bugStage = "all";
+          page = 1;
+          selectedBugId = "";
+          await load();
+          return;
+        }
         data = result;
         page = result.page;
+        bugSelectionScope = bugSelectionKey();
         render();
       } else {
         data = null;
@@ -306,7 +347,10 @@ window.IssueManagement = (() => {
       find("#issueSyncButton").disabled = false;
       find("#issueSyncButton").textContent = "同步数据";
     } finally {
-      if (current === sequence) root.setAttribute("aria-busy", "false");
+      if (current === sequence) {
+        root.setAttribute("aria-busy", "false");
+        renderBugSelection();
+      }
     }
   }
   function renderFilters() {
@@ -356,20 +400,52 @@ window.IssueManagement = (() => {
   }
   function chart(title, entries, chartKind, field = "status") {
     const maximum = Math.max(1, ...entries.map((entry) => entry.count));
-    return `<section class="content-card issue-chart"><h3>${title}</h3>${entries.length ? entries.map((entry) => `<button type="button" class="issue-chart-row" data-chart-kind="${chartKind}" data-chart-field="${field}" data-chart-value="${escape(entry.name === "未填写" ? "__empty__" : entry.name)}"><span title="${escape(entry.name)}">${escape(entry.name)}</span><span class="issue-bar"><span style="width:${(entry.count / maximum) * 100}%"></span></span><b>${entry.count}</b></button>`).join("") : '<p class="muted">暂无数据</p>'}</section>`;
+    const bugStatus = chartKind === "bugs" && field === "status";
+    return `<section class="content-card issue-chart"><h3>${title}</h3>${entries.length ? entries.map((entry) => `<button type="button" class="issue-chart-row${bugStatus ? " issue-chart-status-row" : ""}" data-chart-kind="${chartKind}" data-chart-field="${field}" data-chart-value="${escape(entry.name === "未填写" ? "__empty__" : entry.name)}"><span title="${escape(entry.name)}">${bugStatus && entry.name !== "未填写" ? statusTag(entry.name) : escape(entry.name)}</span><span class="issue-bar"><span style="width:${(entry.count / maximum) * 100}%"></span></span><b>${entry.count}</b></button>`).join("") : '<p class="muted">暂无数据</p>'}</section>`;
   }
   function tableHeader() {
     const columns =
       kind === "requirements" ? ["标题", "优先级", "状态", "开发人员", "提测截止日期", "产品", "测试人员", "设计稿", "设计人员"] : ["标题 / 项目", "状态", "优先级", "处理人"];
-    return columns.map((label) => `<th>${label}</th>`).join("");
+    return columns
+      .map(
+        (label, index) =>
+          `<th>${kind === "bugs" && index === 0 ? `<label class="issue-bug-title-heading"><input class="issue-bug-checkbox" type="checkbox" data-bug-select-all aria-label="全选当前页 bug"><span>${label}</span></label>` : label}</th>`,
+      )
+      .join("");
   }
   function renderTableHeader() {
     find("#issueTable").dataset.kind = kind;
     find("#issueTableHead").innerHTML = tableHeader();
   }
+  function bugSelectionKey() {
+    return JSON.stringify([kind, page, bugStage, filters, conditionFilter]);
+  }
+  function renderBugSelection() {
+    const rows = kind === "bugs" ? data?.items || [] : [];
+    const count = rows.filter((row) => selectedBugs.has(row.id)).length;
+    const busy = Boolean(!data || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true");
+    find("#issueBugBatchActions").hidden = kind !== "bugs" || count === 0;
+    find("#issueBugSelectionCount").textContent = `已选 ${count} 条`;
+    for (const checkbox of root.querySelectorAll("[data-bug-check]")) {
+      checkbox.checked = selectedBugs.has(checkbox.dataset.bugCheck);
+      checkbox.disabled = busy;
+      checkbox.closest("tr").classList.toggle("issue-bug-checked", checkbox.checked);
+    }
+    const selectAll = find("[data-bug-select-all]");
+    if (selectAll) {
+      selectAll.checked = rows.length > 0 && count === rows.length;
+      selectAll.indeterminate = count > 0 && count < rows.length;
+      selectAll.disabled = busy || rows.length === 0;
+    }
+    for (const button of root.querySelectorAll("[data-bug-batch-status], [data-bug-stage]")) button.disabled = busy;
+    if (kind === "bugs" && data) {
+      find("#issuePrevious").disabled = busy || page <= 1;
+      find("#issueNext").disabled = busy || page >= data.page_count;
+    }
+  }
   function rowHtml(row) {
     if (row.kind === "bugs") {
-      return `<tr data-select-bug="${escape(row.id)}" class="${row.id === selectedBugId ? "issue-bug-selected" : ""}"><td><div class="issue-bug-row-title">${recordTitle(row)}</div><small class="muted issue-bug-row-meta">${escape([list(row.project), list(row.version)].filter(Boolean).join(" · ") || "未填写项目 / 版本")}${row.overdue ? ' <span class="text-danger">逾期</span>' : ""}</small></td><td>${statusTag(row.status) || '<span class="muted">未填写</span>'}</td><td>${badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "")}</td><td>${escape(names(row.owners)) || '<span class="muted">未分配</span>'}</td></tr>`;
+      return `<tr data-select-bug="${escape(row.id)}" class="${row.id === selectedBugId ? "issue-bug-selected" : ""}"><td><div class="issue-bug-row-heading"><input class="issue-bug-checkbox" type="checkbox" data-bug-check="${escape(row.id)}" aria-label="选择 bug：${escape(row.title || row.id)}" ${selectedBugs.has(row.id) ? "checked" : ""}><div class="issue-bug-row-content"><div class="issue-bug-row-title">${recordTitle(row)}</div><small class="muted issue-bug-row-meta">${escape([list(row.project), list(row.version)].filter(Boolean).join(" · ") || "未填写项目 / 版本")}${row.overdue ? ' <span class="text-danger">逾期</span>' : ""}</small></div></div></td><td>${statusTag(row.status) || '<span class="muted">未填写</span>'}</td><td>${badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "")}</td><td>${escape(names(row.owners)) || '<span class="muted">未分配</span>'}</td></tr>`;
     }
     const hasChildren = row.kind === "requirements" && row.tree_child_count > 0;
     const collapsed = collapsedRequirements.has(row.id);
@@ -431,7 +507,10 @@ window.IssueManagement = (() => {
       }
       return;
     }
-    if (kind === "bugs" && !data.items.some((row) => row.id === selectedBugId)) selectedBugId = data.items[0]?.id || "";
+    if (kind === "bugs") {
+      for (const id of selectedBugs) if (!data.items.some((row) => row.id === id)) selectedBugs.delete(id);
+      if (!data.items.some((row) => row.id === selectedBugId)) selectedBugId = data.items[0]?.id || "";
+    }
     find("#issueRows").innerHTML = data.items.length ? data.items.map(rowHtml).join("") : '<tr><td colspan="4" class="empty-row">没有符合筛选条件的记录</td></tr>';
     if (kind === "bugs") renderBugDesk();
   }
@@ -535,17 +614,45 @@ window.IssueManagement = (() => {
             .join("") || '<span class="muted">暂无关联需求</span>';
         const attachments = mediaAttachments(row);
         find("#issueBugDetail").innerHTML =
-          `<div class="issue-desk-tags">${statusTag(row.status) || badge("未填写状态")}${badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "")}${row.overdue ? badge("已逾期", "red") : ""}</div><h4 class="issue-desk-title">${escape(title)}</h4><small class="muted">${escape(row.id)}</small><dl class="issue-detail-grid">${pairs.map(([label, value]) => `<div><dt>${label}</dt><dd>${value || "未填写"}</dd></div>`).join("")}</dl><section class="issue-desk-section"><h4>问题说明与链接</h4><div class="issue-desk-text">${escape(row.notes) || '<span class="muted">暂无备注说明</span>'}</div>${row.link ? `<div class="issue-desk-link">${safeLink(row.link, "打开问题链接")}</div>` : ""}</section><section class="issue-desk-section"><h4>根因分析与解决方式</h4><div class="issue-desk-text">${escape(row.solution) || '<span class="muted">暂无记录</span>'}</div></section><section class="issue-desk-section"><h4>附件</h4><div class="issue-desk-attachments">${attachments}</div></section><section class="issue-desk-section"><h4>关联需求</h4><div class="issue-related">${related}</div></section><details class="issue-desk-more"><summary>更多信息</summary><dl class="issue-detail-grid"><div><dt>创建时间</dt><dd>${escape(row.created_at?.replace("T", " ")) || "未填写"}</dd></div><div><dt>预计修复完成</dt><dd>${date(row.due_at) || "未填写"}</dd></div><div><dt>截止日期</dt><dd>${date(row.deadline) || "未填写"}</dd></div><div><dt>bug 分类</dt><dd>${escape(row.category) || "未填写"}</dd></div><div><dt>bug 属性</dt><dd>${escape(row.attribute) || "未填写"}</dd></div></dl></details><div class="issue-detail-footer">${safeLink(row.source_url, "在飞书打开详情")}</div>`;
+          `<div class="issue-desk-tags">${statusTag(row.status) || badge("未填写状态")}${badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "")}${row.overdue ? badge("已逾期", "red") : ""}</div><h4 class="issue-desk-title"><button type="button" data-copy-bug-title title="点击复制标题">${escape(title)}</button></h4><small class="muted">${escape(row.id)}</small><dl class="issue-detail-grid">${pairs.map(([label, value]) => `<div><dt>${label}</dt><dd>${value || "未填写"}</dd></div>`).join("")}</dl><section class="issue-desk-section"><h4>问题说明与链接</h4><div class="issue-desk-text">${escape(row.notes) || '<span class="muted">暂无备注说明</span>'}</div>${row.link ? `<div class="issue-desk-link">${safeLink(row.link, "打开问题链接")}</div>` : ""}</section><section class="issue-desk-section"><h4>根因分析与解决方式</h4><div class="issue-desk-text">${escape(row.solution) || '<span class="muted">暂无记录</span>'}</div></section><section class="issue-desk-section"><h4>附件</h4><div class="issue-desk-attachments">${attachments}</div></section><section class="issue-desk-section"><h4>关联需求</h4><div class="issue-related">${related}</div></section><details class="issue-desk-more"><summary>更多信息</summary><dl class="issue-detail-grid"><div><dt>创建时间</dt><dd>${escape(row.created_at?.replace("T", " ")) || "未填写"}</dd></div><div><dt>预计修复完成</dt><dd>${date(row.due_at) || "未填写"}</dd></div><div><dt>截止日期</dt><dd>${date(row.deadline) || "未填写"}</dd></div><div><dt>bug 分类</dt><dd>${escape(row.category) || "未填写"}</dd></div><div><dt>bug 属性</dt><dd>${escape(row.attribute) || "未填写"}</dd></div></dl></details><div class="issue-detail-footer">${safeLink(row.source_url, "在飞书打开详情")}</div>`;
       }
       find("#issueBugDetail").scrollTop = 0;
     }
     for (const button of root.querySelectorAll("[data-bug-status]")) {
       button.disabled = !row || busy || row.status === button.dataset.bugStatus;
-      button.textContent = submittingBug?.id === row?.id && submittingBug?.status === button.dataset.bugStatus ? "保存中…" : button.dataset.bugStatus;
+      button.textContent =
+        submittingBug?.id === row?.id && submittingBug?.status === button.dataset.bugStatus ? "保存中…" : button.dataset.bugStatusLabel || button.dataset.bugStatus;
     }
     find("#issueBugSkip").disabled = !row || busy || (index === data.items.length - 1 && page >= data.page_count);
     for (const title of find("#issueRows").querySelectorAll("[data-detail]")) {
       if (title.dataset.detail === selectedBugId) title.setAttribute("aria-current", "true");
+    }
+    renderBugSelection();
+  }
+  async function copyBugTitle(button) {
+    const title = button.textContent;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(title);
+      } else {
+        const input = document.createElement("textarea");
+        input.value = title;
+        input.readOnly = true;
+        input.style.position = "fixed";
+        input.style.opacity = "0";
+        document.body.appendChild(input);
+        const focused = document.activeElement;
+        try {
+          input.select();
+          if (!document.execCommand("copy")) throw new Error("复制失败");
+        } finally {
+          input.remove();
+          focused?.focus({ preventScroll: true });
+        }
+      }
+      toast("已复制");
+    } catch {
+      toast("复制失败，请重试", "error");
     }
   }
   async function nextBug() {
@@ -561,10 +668,7 @@ window.IssueManagement = (() => {
   async function updateBugStatus(status) {
     const row = data?.items.find((item) => item.id === selectedBugId);
     if (kind !== "bugs" || !row || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || row.status === status) return;
-    const opening = openSequence,
-      current = sequence;
-    const index = data.items.indexOf(row);
-    const nextId = data.items[index + 1]?.id || data.items[index - 1]?.id || "";
+    const opening = openSequence;
     const showStatus = (message, failed = false) => {
       const element = find("#issueBugActionStatus");
       element.textContent = message;
@@ -583,7 +687,6 @@ window.IssueManagement = (() => {
       });
       if (opening !== openSequence) return;
       showStatus(result.warning || `“${String(row.title || "bug").slice(0, 40)}”已标记为“${result.status}”。`, Boolean(result.warning));
-      if (selectedBugId === row.id && sequence === current && !result.warning) selectedBugId = nextId || row.id;
       await load();
     } catch (error) {
       if (opening !== openSequence) return;
@@ -591,6 +694,50 @@ window.IssueManagement = (() => {
       await load();
     } finally {
       submittingBug = null;
+      if (data) {
+        setStatus(data.sync);
+        if (kind === "bugs") renderBugDesk();
+      }
+    }
+  }
+  async function updateSelectedBugStatuses(status) {
+    if (kind !== "bugs" || !data || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true") return;
+    const records = data.items.filter((row) => selectedBugs.has(row.id)).map((row) => ({ id: row.id, expected_status: row.status }));
+    if (!records.length) return;
+    const opening = openSequence;
+    const showStatus = (message, failed = false) => {
+      const element = find("#issueBugBatchStatus");
+      element.textContent = message;
+      element.classList.toggle("text-danger", failed);
+      element.classList.toggle("text-success", !failed);
+      element.hidden = false;
+    };
+    submittingBug = { ids: records.map((row) => row.id), status };
+    form.inert = true;
+    form.elements.q.disabled = true;
+    renderBugDesk();
+    find("#issueSyncButton").disabled = true;
+    showStatus(`正在将选中的 ${records.length} 条 bug 标记为“${status}”…`);
+    try {
+      const result = await request("/api/issues/bugs/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records, status }),
+      });
+      if (opening !== openSequence) return;
+      selectedBugs.clear();
+      showStatus(result.warning || `已将 ${result.updated_count} 条 bug 标记为“${result.status}”。`, Boolean(result.warning));
+      await load();
+    } catch (error) {
+      if (opening !== openSequence) return;
+      showStatus(`批量更新失败：${error.message}`, true);
+      await load();
+    } finally {
+      submittingBug = null;
+      if (opening === openSequence) {
+        form.inert = false;
+        form.elements.q.disabled = false;
+      }
       if (data) {
         setStatus(data.sync);
         if (kind === "bugs") renderBugDesk();
@@ -628,6 +775,7 @@ window.IssueManagement = (() => {
     workspaceResizer.hidden = kind !== "bugs";
     if (kind === "bugs") applyWorkspaceRatio();
     find("#issueBugDesk").hidden = kind !== "bugs";
+    find("#issueBugToolbar").hidden = kind !== "bugs";
     find("#issueBugStages").hidden = kind !== "bugs";
     if (kind === "bugs")
       find("#issueBugStages").innerHTML = [
@@ -636,14 +784,18 @@ window.IssueManagement = (() => {
         ["release", "已修复待发布"],
         ["fixed", "已修复"],
       ]
+        .filter(([value]) => value === "all" || data.bug_stages[value] > 0)
         .map(
           ([value, label]) =>
-            `<button type="button" data-bug-stage="${value}" aria-pressed="${value === bugStage}" class="issue-bug-stage ${value === bugStage ? "active" : ""}">${label}<span>${data.bug_stages[value] || 0}</span></button>`,
+            `<button type="button"
+              data-bug-stage="${value}"
+              aria-pressed="${value === bugStage}"
+              class="issue-bug-stage ${value === bugStage ? "active" : ""}">
+                  ${["release", "fixed"].includes(value) ? statusTag(label) : escape(label)}
+                  <span class="issue-bug-stage-count">${data.bug_stages[value]}</span>
+              </button>`,
         )
         .join("");
-    find("#issueListTitle").textContent = kind === "bugs" ? "Bug 处理工作台" : labels[kind] + "列表";
-    find("#issueListHint").textContent = kind === "requirements" ? "按父需求版本分组，版本和子需求默认展开，点击标题查看详情" : "左侧选择 bug，右侧查看详情并更新状态";
-    find("#issueTotal").textContent = `共 ${data.total} 条${data.matched_total < data.total ? `（命中 ${data.matched_total} 条）` : ""}`;
     renderRows();
     const pages = data.page_count;
     find("#issuePageInfo").textContent =
@@ -681,6 +833,8 @@ window.IssueManagement = (() => {
   }
   async function open(nextKind, parameters = new URLSearchParams()) {
     if (!(nextKind in labels)) return;
+    attachmentViewer?.destroy();
+    attachmentViewer = null;
     autoSyncControl.disabled = true;
     clearTimeout(autoSyncTimer);
     autoSyncTimer = null;
@@ -702,9 +856,13 @@ window.IssueManagement = (() => {
     allowStaleCache = true;
     renderAutoSyncControl();
     selectedBugId = "";
+    selectedBugs.clear();
+    bugSelectionScope = "";
     bugStage = "all";
     bugDetailKey = "";
     find("#issueBugActionStatus").textContent = "";
+    find("#issueBugBatchStatus").hidden = true;
+    find("#issueBugBatchActions").hidden = true;
     find("#issueBugDiscussionStatus").hidden = true;
     collapsedRequirements.clear();
     collapsedVersions.clear();
@@ -721,9 +879,6 @@ window.IssueManagement = (() => {
     form.inert = true;
     form.elements.q.disabled = true;
     find("#issueSyncButton").disabled = true;
-    find("#issueTitle").textContent = labels[kind];
-    find("#issueSubtitle").textContent =
-      kind === "overview" ? "查看需求交付与缺陷处理情况" : kind === "requirements" ? "集中查看需求进度、人员与计划" : "逐条处理缺陷，快速标记修复与发布状态";
     renderTableHeader();
     find("#issueProjectMultiFilter").hidden = kind !== "requirements";
     find("#issueFamilyFilter").hidden = kind !== "requirements";
@@ -733,7 +888,8 @@ window.IssueManagement = (() => {
     menu.hidden = false;
     document.querySelector("#issueMenuToggle").setAttribute("aria-expanded", "true");
     try {
-      let preferences = null, autoSyncError = "";
+      let preferences = null,
+        autoSyncError = "";
       try {
         preferences = await request(`/api/issues/preferences/${kind}`);
       } catch (error) {
@@ -915,6 +1071,8 @@ window.IssueManagement = (() => {
   });
   form.elements.q.addEventListener("input", (event) => {
     filters.q = event.target.value;
+    selectedBugs.clear();
+    renderBugSelection();
     searchSavePending = true;
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
@@ -1010,32 +1168,39 @@ window.IssueManagement = (() => {
   }
   find("#issueSyncButton").addEventListener("click", () => syncData());
   autoSyncControl.addEventListener("change", () => {
-    const target = kind, opening = openSequence;
-    const previous = { ...autoSyncSettings }, enabled = autoSyncControl.checked;
+    const target = kind,
+      opening = openSequence;
+    const previous = { ...autoSyncSettings },
+      enabled = autoSyncControl.checked;
     autoSyncControl.disabled = true;
     clearTimeout(autoSyncTimer);
     autoSyncTimer = null;
-    preferenceQueue = preferenceQueue.then(async () => {
-      const saved = await request(`/api/issues/preferences/${target}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ auto_sync: enabled }),
+    preferenceQueue = preferenceQueue
+      .then(async () => {
+        const saved = await request(`/api/issues/preferences/${target}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_sync: enabled }),
+        });
+        applyAutoSyncPreferences(saved, target);
+        if (opening === openSequence && kind === target) {
+          renderAutoSyncControl();
+          find("#issuePreferenceStatus").hidden = true;
+        }
+      })
+      .catch((error) => {
+        Object.assign(autoSyncSettings, previous);
+        if (opening === openSequence && kind === target) {
+          renderAutoSyncControl();
+          preferenceError(`自动同步配置保存失败：${error.message}`);
+        }
+      })
+      .finally(() => {
+        if (opening === openSequence && kind === target) {
+          autoSyncControl.disabled = false;
+          scheduleAutoSync();
+        }
       });
-      applyAutoSyncPreferences(saved, target);
-      if (opening === openSequence && kind === target) {
-        renderAutoSyncControl();
-        find("#issuePreferenceStatus").hidden = true;
-      }
-    }).catch((error) => {
-      Object.assign(autoSyncSettings, previous);
-      if (opening === openSequence && kind === target) {
-        renderAutoSyncControl();
-        preferenceError(`自动同步配置保存失败：${error.message}`);
-      }
-    }).finally(() => {
-      if (opening === openSequence && kind === target) {
-        autoSyncControl.disabled = false;
-        scheduleAutoSync();
-      }
-    });
   });
   find("#issueCloseDetail").addEventListener("click", () => find("#issueDetailDialog").close());
   find("#issueBugSkip").addEventListener("click", nextBug);
@@ -1048,7 +1213,19 @@ window.IssueManagement = (() => {
     },
     true,
   );
+  root.addEventListener("change", (event) => {
+    const checkbox = event.target;
+    if (!checkbox.matches("[data-bug-check], [data-bug-select-all]") || checkbox.disabled || kind !== "bugs" || !data) return;
+    const ids = checkbox.hasAttribute("data-bug-select-all") ? data.items.map((row) => row.id) : [checkbox.dataset.bugCheck];
+    for (const id of ids) {
+      if (checkbox.checked) selectedBugs.add(id);
+      else selectedBugs.delete(id);
+    }
+    find("#issueBugBatchStatus").hidden = true;
+    renderBugSelection();
+  });
   root.addEventListener("click", (event) => {
+    if (event.target.closest("[data-bug-check], [data-bug-select-all]")) return;
     const title = event.target.closest("[data-detail]");
     if (title) {
       if (title.tagName === "A" && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0)) return;
@@ -1069,6 +1246,14 @@ window.IssueManagement = (() => {
       return;
     }
     if (!button) return;
+    if (button.hasAttribute("data-preview-image")) {
+      previewAttachment(button);
+      return;
+    }
+    if (button.hasAttribute("data-copy-bug-title")) {
+      copyBugTitle(button);
+      return;
+    }
     if (button.hasAttribute("data-create-bug-discussion")) {
       createBugDiscussion();
       return;
@@ -1082,6 +1267,10 @@ window.IssueManagement = (() => {
       media.hidden = false;
       media.src = source.href;
       if (media.tagName === "VIDEO") media.load();
+      return;
+    }
+    if (button.hasAttribute("data-bug-batch-status")) {
+      updateSelectedBugStatuses(button.dataset.bugBatchStatus);
       return;
     }
     if (button.hasAttribute("data-bug-status")) {
