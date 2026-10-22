@@ -53,10 +53,9 @@
       </aside>
       <div class="main-area">
         <main class="content-area">
-          <span id="pageEyebrow" hidden></span><span id="pageTitle" hidden></span><span id="host" hidden></span>
           <section class="page-view active" id="overview-page">
             <section class="metrics row g-3" id="metrics"></section>
-            <section class="content-card system-card">
+            <section class="content-card">
               <div class="section-heading">
                 <div>
                   <p class="eyebrow">SERVER</p>
@@ -100,7 +99,7 @@
           </section>
           <section class="page-view" id="operations-page">
             <div class="section-heading page-heading"><button class="btn btn-outline-secondary btn-sm" onclick="refresh()">刷新</button></div>
-            <section class="content-card operation-card"><div id="operations"></div></section>
+            <section class="content-card"><div id="operations"></div></section>
           </section>
           <section class="page-view" id="tmux-page">
             <div class="section-heading page-heading"><div><h2>Tmux 会话</h2><p class="muted mb-0">管理由 Release Lite 创建的项目终端会话。</p></div><button class="btn btn-outline-secondary btn-sm" onclick="loadTmuxSessions()"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>
@@ -122,6 +121,7 @@
   <script src="/static/vendor/xterm/xterm.min.js?v=5.3.0"></script>
   <script src="/static/vendor/xterm/xterm-addon-fit.min.js?v=0.8.0"></script>
   <script src="/static/vendor/viewerjs/viewer.min.js?v=1.11.7"></script>
+  <script src="/static/common.js"></script>
   <script src="{{ url_for('issue_management.static', filename='filter-controls.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='condition-builder.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='issues.js') }}"></script>

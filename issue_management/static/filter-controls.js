@@ -21,7 +21,7 @@ window.IssueFilterControls = {
     list.style.maxHeight = `${Math.max(36, Math.min(180, available - chrome - 2))}px`;
   },
   create(form, renderProjects) {
-    const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    const escape = ReleaseLite.escapeHtml;
     const widgets = [];
     function renderOptions(widget) {
       const query = widget.search.value.trim().toLocaleLowerCase();

@@ -1,7 +1,7 @@
 /* Local condition editor: searchable fields/operators and multiple removable values. */
 window.IssueConditionBuilder = {
   create(container, onChange) {
-    const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+    const escape = ReleaseLite.escapeHtml;
     let kind = "overview", options = {}, logic = "and", rules = [], nextId = 0;
     const fieldLabels = () => ({ project: "项目", version: "版本", person: kind === "requirements" ? "开发人员" : kind === "bugs" ? "处理人" : "开发人员 / 处理人", status: "状态", priority: "优先级", environment: "发现环境", hierarchy: "需求层级", scope: "待办范围" });
     function choices(field) {
@@ -88,12 +88,7 @@ window.IssueConditionBuilder = {
         event.preventDefault(); [...details.querySelectorAll('[role="option"]')].find((button) => !button.hidden)?.click();
       }
     });
-    container.closest(".issue-module").addEventListener("click", (event) => {
-      const conditionMenu = event.composedPath().find((node) => node.dataset?.conditionMenu)?.dataset.conditionMenu;
-      for (const details of container.querySelectorAll("details[open]")) if (!details.contains(event.target) && details.dataset.conditionMenu !== conditionMenu) details.open = false;
-    });
     return {
-      value,
       set(nextKind, nextOptions, conditions) { kind = nextKind; options = nextOptions || {}; logic = conditions.logic; rules = conditions.rules.map((rule) => ({ ...rule, values: [...rule.values], id: nextId++ })); render(); },
       updateOptions(nextOptions) { if (JSON.stringify(options) !== JSON.stringify(nextOptions)) { options = nextOptions; render(); } },
       setLogic(nextLogic) { logic = nextLogic; onChange(value()); },

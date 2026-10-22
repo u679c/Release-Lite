@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import psutil
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, render_template, request
 from flask_socketio import SocketIO
 
 from issue_management import init_app as init_issue_management
@@ -141,7 +141,9 @@ def system_memory_details():
     vm = psutil.virtual_memory()
     details = mac_vm_stat() if os.uname().sysname == "Darwin" else None
     if details is None:
-        details = {"app_memory": max(0, vm.used - vm.cached - vm.buffers), "wired_memory": 0, "compressed": 0, "cached": vm.cached}
+        cached = getattr(vm, "cached", 0)
+        buffers = getattr(vm, "buffers", 0)
+        details = {"app_memory": max(0, vm.used - cached - buffers), "wired_memory": 0, "compressed": 0, "cached": cached}
     try:
         swap_used = psutil.swap_memory().used
     except (psutil.Error, OSError):
@@ -274,6 +276,13 @@ def managed_log_entries(project_id=None, kind=None, sort="size_desc"):
     return entries
 def append_log(path, text):
     with open(path, "a", encoding="utf-8") as f: f.write(text)
+def read_log_tail(path, limit=100000):
+    # UTF-8 uses at most four bytes per character; bound I/O for large runtime logs.
+    with path.open("rb") as stream:
+        stream.seek(0, os.SEEK_END)
+        stream.seek(max(0, stream.tell() - limit * 4))
+        text = stream.read().decode("utf-8", errors="replace")
+        return text.replace("\r\n", "\n").replace("\r", "\n")[-limit:]
 def pane_log_command(logfile):
     """Return a portable, line-buffered command for tmux pipe-pane."""
     script = """import sys
@@ -358,7 +367,7 @@ def start_project(project, operator="web", subproject=None):
     _, pid = launch_project_terminal(project, root, env, runtime_log, command)
     write("INSERT INTO process_state(project_id,pid,started_at,command,expected_running,subproject,updated_at) VALUES(?,?,?,?,1,?,?) ON CONFLICT(project_id) DO UPDATE SET pid=excluded.pid,started_at=excluded.started_at,command=excluded.command,expected_running=1,subproject=excluded.subproject,updated_at=excluded.updated_at", (project["id"], pid, now(), command, selected_subproject, now()))
     audit(project["id"], "启动", f"PID {pid}", operator); return pid
-def stop_project(project, operator="web", intentional=True):
+def stop_project(project, operator="web"):
     close_project_terminal(project["id"])
     state = one("SELECT * FROM process_state WHERE project_id=?", (project["id"],))
     if not state or not alive(state["pid"]):
@@ -390,7 +399,7 @@ def deploy_worker(project_id, deployment_id, revision=None):
         commit = git_output(root, "rev-parse HEAD")
         env = prepare_python_environment(project, root, env, logfile)
         if project["pre_deploy_hook"]: run_command(project["pre_deploy_hook"], root, env, logfile, "更新代码前钩子")
-        stop_project(project, "deploy", intentional=False)
+        stop_project(project, "deploy")
         if project["post_deploy_hook"]: run_command(project["post_deploy_hook"], root, env, logfile, "更新代码后钩子")
         start_project(project, "deploy")
         write("UPDATE deployments SET status='success',revision=?,finished_at=?,message=? WHERE id=?", (commit, now(), "代码更新完成", deployment_id))
@@ -472,23 +481,66 @@ def list_projects(): return jsonify(rows("SELECT * FROM projects ORDER BY name")
 def node_versions(): return jsonify({"versions": installed_node_versions(), "nvm_dir": str(nvm_dir())})
 @app.post("/api/projects")
 def save_project():
-    data=request.get_json(force=True); name=(data.get("name") or "").strip(); root=(data.get("root_path") or "").strip(); command=(data.get("start_command") or "").strip()
-    if not name or not root or not command: return jsonify(error="名称、项目目录和启动命令均为必填项"), 400
+    data = request.get_json(force=True)
+    name = (data.get("name") or "").strip()
+    root = (data.get("root_path") or "").strip()
+    command = (data.get("start_command") or "").strip()
+    if not name or not root or not command:
+        return jsonify(error="名称、项目目录和启动命令均为必填项"), 400
     runtime = data.get("runtime") or "python"
-    if runtime not in {"python", "node", "generic"}: return jsonify(error="不支持的运行环境"), 400
-    try: safe_project_path({"root_path":root})
-    except RuntimeError as e: return jsonify(error=str(e)), 400
-    is_git=int(not bool(data.get("non_git")))
+    if runtime not in {"python", "node", "generic"}:
+        return jsonify(error="不支持的运行环境"), 400
+    try:
+        safe_project_path({"root_path": root})
+    except RuntimeError as exc:
+        return jsonify(error=str(exc)), 400
+    is_git = int(not bool(data.get("non_git")))
     subprojects_enabled = int(bool(data.get("subprojects_enabled")))
     subprojects = data.get("subprojects") or ""
     subproject_items = subproject_options({"subprojects": subprojects})
-    if subprojects_enabled and not subproject_items: return jsonify(error="请至少填写一个子项目"), 400
+    if subprojects_enabled and not subproject_items:
+        return jsonify(error="请至少填写一个子项目"), 400
     commands = [item["command"] for item in subproject_items]
-    if len(commands) != len(set(commands)): return jsonify(error="子项目命令不能重复"), 400
-    vals=(name,root,data.get("branch") or "main",is_git,command,data.get("stop_command") or "",data.get("pre_deploy_hook") or "",data.get("post_deploy_hook") or "",data.get("env_vars") or "",int(bool(data.get("auto_deploy"))) if is_git else 0,int(bool(data.get("auto_restart"))),subprojects_enabled,subprojects,runtime,data.get("python_executable") or "python3",data.get("venv_path") or ".venv",data.get("requirements_file") or "requirements.txt",int(bool(data.get("auto_install_dependencies"))),data.get("node_version") if runtime == "node" else "",(data.get("node_dependency_command") or "").strip() if runtime == "node" else "",data.get("git_webhook_secret") if is_git else "",now())
-    if data.get("id"):
-        project_or_404(data["id"]); write("UPDATE projects SET name=?,root_path=?,branch=?,is_git=?,start_command=?,stop_command=?,pre_deploy_hook=?,post_deploy_hook=?,env_vars=?,auto_deploy=?,auto_restart=?,subprojects_enabled=?,subprojects=?,runtime=?,python_executable=?,venv_path=?,requirements_file=?,auto_install_dependencies=?,node_version=?,node_dependency_command=?,git_webhook_secret=?,updated_at=? WHERE id=?", vals+(data["id"],)); audit(data["id"], "更新项目", name); return jsonify(id=data["id"])
-    wid=secrets.token_urlsafe(24); pid=write("INSERT INTO projects(name,root_path,branch,is_git,start_command,stop_command,pre_deploy_hook,post_deploy_hook,env_vars,auto_deploy,auto_restart,subprojects_enabled,subprojects,runtime,python_executable,venv_path,requirements_file,auto_install_dependencies,node_version,node_dependency_command,webhook_secret,git_webhook_secret,created_at,updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", vals[:20]+(wid,vals[20],now(),now())); audit(pid,"创建项目",name); return jsonify(id=pid)
+    if len(commands) != len(set(commands)):
+        return jsonify(error="子项目命令不能重复"), 400
+    # One field mapping serves both INSERT and UPDATE; avoid positional tuple slices.
+    fields = {
+        "name": name,
+        "root_path": root,
+        "branch": data.get("branch") or "main",
+        "is_git": is_git,
+        "start_command": command,
+        "stop_command": data.get("stop_command") or "",
+        "pre_deploy_hook": data.get("pre_deploy_hook") or "",
+        "post_deploy_hook": data.get("post_deploy_hook") or "",
+        "env_vars": data.get("env_vars") or "",
+        "auto_deploy": int(bool(data.get("auto_deploy"))) if is_git else 0,
+        "auto_restart": int(bool(data.get("auto_restart"))),
+        "subprojects_enabled": subprojects_enabled,
+        "subprojects": subprojects,
+        "runtime": runtime,
+        "python_executable": data.get("python_executable") or "python3",
+        "venv_path": data.get("venv_path") or ".venv",
+        "requirements_file": data.get("requirements_file") or "requirements.txt",
+        "auto_install_dependencies": int(bool(data.get("auto_install_dependencies"))),
+        "node_version": data.get("node_version") if runtime == "node" else "",
+        "node_dependency_command": (data.get("node_dependency_command") or "").strip() if runtime == "node" else "",
+        "git_webhook_secret": data.get("git_webhook_secret") if is_git else "",
+        "updated_at": now(),
+    }
+    project_id = data.get("id")
+    if project_id:
+        project_or_404(project_id)
+        assignments = ",".join(f"{column}=?" for column in fields)
+        write(f"UPDATE projects SET {assignments} WHERE id=?", (*fields.values(), project_id))
+        audit(project_id, "更新项目", name)
+    else:
+        fields.update(webhook_secret=secrets.token_urlsafe(24), created_at=now())
+        columns = ",".join(fields)
+        placeholders = ",".join("?" for _ in fields)
+        project_id = write(f"INSERT INTO projects({columns}) VALUES({placeholders})", tuple(fields.values()))
+        audit(project_id, "创建项目", name)
+    return jsonify(id=project_id)
 @app.delete("/api/projects/<int:project_id>")
 def delete_project(project_id):
     p=project_or_404(project_id); stop_project(p); write("DELETE FROM projects WHERE id=?",(project_id,)); audit(None,"删除项目",p["name"]); return jsonify(ok=True)
@@ -543,7 +595,7 @@ def directories():
 def logs(project_id,kind):
     project_or_404(project_id); path = project_log_path(project_id, kind)
     if not path.exists(): return jsonify(text="暂无日志")
-    return jsonify(text=path.read_text(encoding="utf-8", errors="replace")[-100000:])
+    return jsonify(text=read_log_tail(path))
 @app.get("/api/projects/<int:project_id>/logs/summary")
 def log_summary(project_id):
     project_or_404(project_id)
@@ -627,8 +679,10 @@ def terminal_session_name(project_id):
     return f"release-lite-project-{project_id}" if project_id else "release-lite-shell"
 def dependency_terminal_session_name(project_id):
     return f"release-lite-dependencies-{project_id}"
-def terminal_cwd(project_id):
-    return safe_project_path(project_or_404(project_id)) if project_id else Path.home()
+def terminal_exports(project, env):
+    """Pass the selected runtime into panes of an already-running tmux server."""
+    keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
+    return "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(keys) if key in env)
 def launch_project_terminal(project, root, env, logfile, command):
     if not shutil.which("tmux"):
         raise RuntimeError("未安装 tmux。请先安装 tmux 后再启动项目。")
@@ -638,8 +692,7 @@ def launch_project_terminal(project, root, env, logfile, command):
     # tmux server 会保留创建时的环境；不能只依赖 subprocess 的 env，
     # 否则已有 tmux server 可能仍用旧 Node.js 的 PATH。把运行环境写入 pane 命令，
     # 确保 pnpm/corepack 与项目所选的 Node 版本一致。
-    runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
-    exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
+    exports = terminal_exports(project, env)
     # 新建 tmux 会话会立刻执行命令；若稍后才 pipe-pane，快速启动/退出的
     # 命令输出会完全错过。先让 pane 等待，再连接日志管道并显式放行。
     channel = f"release-lite-project-{project['id']}-{uuid.uuid4().hex}"
@@ -664,14 +717,12 @@ def run_dependency_terminal(project, root, env, logfile, command):
     name = dependency_terminal_session_name(project["id"])
     subprocess.run(["tmux", "kill-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     shell = os.environ.get("SHELL", "/bin/zsh")
-    runtime_keys = {"PATH", "VIRTUAL_ENV", "NVM_DIR", "NVM_BIN", "RELEASE_LITE_PROJECT_ID", *env_dict(project.get("env_vars", "")).keys()}
-    exports = "".join(f"export {key}={shlex.quote(env[key])}; " for key in sorted(runtime_keys) if key in env)
+    exports = terminal_exports(project, env)
     result_file = LOG_DIR / f"project-{project['id']}-dependencies.result"
-    channel = f"release-lite-dependencies-{project['id']}-{uuid.uuid4().hex}"
     try: result_file.unlink()
     except FileNotFoundError: pass
     start_channel = f"release-lite-dependencies-start-{project['id']}-{uuid.uuid4().hex}"
-    shell_command = f"tmux wait-for {shlex.quote(start_channel)}; {exports}{command}; status=$?; printf '%s' \"$status\" > {shlex.quote(str(result_file))}; tmux wait-for -S {shlex.quote(channel)}; exit \"$status\""
+    shell_command = f"tmux wait-for {shlex.quote(start_channel)}; {exports}{command}; status=$?; printf '%s' \"$status\" > {shlex.quote(str(result_file))}; exit \"$status\""
     subprocess.run(["tmux", "new-session", "-d", "-s", name, "-c", str(root), shell, "-lc", shell_command], check=True, env=env)
     try:
         subprocess.run(["tmux", "pipe-pane", "-o", "-t", name, pane_log_command(logfile)], check=True)

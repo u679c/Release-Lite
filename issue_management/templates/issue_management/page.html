@@ -1,9 +1,7 @@
 <section class="page-view issue-module" id="issues-page">
   <div class="section-heading page-heading issue-heading">
-    <div>
-      <label class="issue-search" role="search"><input class="form-control form-control-sm" name="q" form="issueFilters"
-          type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID"></label>
-    </div>
+    <label role="search"><input class="form-control form-control-sm" name="q" form="issueFilters"
+        type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID"></label>
     <div class="issue-heading-actions"><a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank"
         rel="noopener noreferrer" hidden>在飞书打开 <i class="bi bi-box-arrow-up-right"></i></a><button
         class="btn btn-outline-secondary btn-sm" id="issueFilterButton" type="button" aria-haspopup="dialog"
@@ -39,6 +37,8 @@
           </div>
         </details>
       </div>
+      <label id="issueVersionSort" class="form-check issue-version-sort" hidden><input class="form-check-input"
+          type="checkbox" name="version_desc" value="1"><span class="form-check-label">按版本倒序</span></label>
       <section class="issue-condition-builder" aria-label="筛选条件组合">
         <div class="issue-condition-heading"><span>符合以下</span><select class="form-select" name="condition_logic"
             aria-label="条件组合方式">

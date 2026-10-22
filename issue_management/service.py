@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from .conditions import matches_conditions, normalize_conditions
 from .hierarchy import requirement_groups
+from .storage import write_json
 
 
 BASE_TOKEN = "F43vbWYH5aXpvtsUtaFcJ3Ecnle"
@@ -103,6 +104,16 @@ def text(value):
     return str(value)
 
 
+def validate_record_id(record_id, label):
+    if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
+        raise ValueError(f"{label}记录 ID 不正确")
+
+
+def version_sort_key(name):
+    """Compare numeric parts as numbers, so 5.10 sorts after 5.9."""
+    return tuple((1, int(part)) if part.isdecimal() else (0, part.casefold()) for part in re.split(r"(\d+)", name))
+
+
 def parse_date_range(filters):
     today = datetime.now(SHANGHAI).date()
     year, month = divmod(today.year * 12 + today.month - 1 - 2, 12)
@@ -132,6 +143,8 @@ class IssueService:
         self.sync_attempts = {}
         try:
             cached = json.loads((self.cache_dir / "snapshot.json").read_text(encoding="utf-8"))
+            if not isinstance(cached, dict):
+                return
             if cached.get("schema") == 7 and isinstance(cached.get("date_range"), dict):
                 cached = {**cached, "schema": SNAPSHOT_SCHEMA, "table_sync": {
                     kind: {key: cached.get(key) for key in ("date_range", "timestamp", "updated_at", "context_complete")}
@@ -384,14 +397,10 @@ class IssueService:
         return [row for record_id, row in index.items() if record_id not in original_ids]
 
     def _write_snapshot(self, snapshot):
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        temporary = self.cache_dir / "snapshot.tmp"
-        temporary.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(self.cache_dir / "snapshot.json")
+        write_json(self.cache_dir / "snapshot.json", snapshot)
 
     def submit_requirement(self, record_id):
-        if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
-            raise ValueError("需求记录 ID 不正确")
+        validate_record_id(record_id, "需求")
         with self.lock:
             if self.syncing or self.submitting:
                 raise IssueBusyError("正在同步数据或提测，请稍后重试。")
@@ -489,9 +498,7 @@ class IssueService:
 
     @staticmethod
     def _write_discussion_state(path, state):
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(path)
+        write_json(path, state)
 
     def _cache_bug_discussion(self, record_id, chat):
         warning = ""
@@ -509,8 +516,7 @@ class IssueService:
         return warning
 
     def create_bug_discussion(self, record_id):
-        if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
-            raise ValueError("bug 记录 ID 不正确")
+        validate_record_id(record_id, "bug ")
         with self.lock:
             if self.syncing or self.submitting:
                 raise IssueBusyError("正在同步数据或更新记录，请稍后重试。")
@@ -542,7 +548,7 @@ class IssueService:
                             if any(not isinstance(member, str) or not re.fullmatch(r"ou_[A-Za-z0-9]+", member) for member in members):
                                 raise ValueError("创建人或处理人的飞书用户 ID 不正确，请同步后重试。")
                             title = re.sub(r"^\[([\s\S]*)\]\(https?://[^\s]+\)$", r"\1", text(row.get("title"))).strip() or record_id
-                            name = (title)[:60]
+                            name = title[:60]
                             arguments = ["+chat-create", "--name", name, "--description", f"Bug 讨论 · {record_id}", "--type", "private"]
                             if members:
                                 arguments.extend(["--users", ",".join(members)])
@@ -611,8 +617,7 @@ class IssueService:
             if not isinstance(record, dict):
                 raise ValueError("bug 状态更新参数格式不正确")
             record_id = record.get("id")
-            if not isinstance(record_id, str) or not record_id.startswith("rec") or not record_id.isascii() or not record_id.isalnum():
-                raise ValueError("bug 记录 ID 不正确")
+            validate_record_id(record_id, "bug ")
             if record_id in expected:
                 raise ValueError("不能重复选择同一条 bug")
             if not isinstance(record.get("expected_status"), str):
@@ -872,14 +877,17 @@ class IssueService:
                     parent = ancestors[0]
                 values = parent.get("version") or []
                 version_key = json.dumps(values, ensure_ascii=False)
-                bucket = versions.setdefault(version_key, {"key": version_key, "name": "、".join(values) or "未填写版本", "groups": []})
+                bucket = versions.setdefault(version_key, {"key": version_key, "name": "、".join(values) or "其他版本", "groups": []})
                 bucket["groups"].append(group)
+            ordered_versions = list(versions.values())
+            if filters.get("version_desc") == "1":
+                ordered_versions.sort(key=lambda bucket: (bucket["key"] == "[]", version_sort_key(bucket["name"])), reverse=True)
             total_versions = len(versions)
             page_size = VERSION_PAGE_SIZE
             page_count = max(1, (total_versions + page_size - 1) // page_size)
             page = min(page, page_count)
             page_rows = []
-            for bucket in list(versions.values())[(page - 1) * page_size:page * page_size]:
+            for bucket in ordered_versions[(page - 1) * page_size:page * page_size]:
                 rows = [dict(row, version_group=bucket["key"]) for group in bucket["groups"] for row in group]
                 page_rows.extend(rows)
                 version_groups.append({"key": bucket["key"], "name": bucket["name"], "total": len(rows), "total_groups": len(bucket["groups"]), "matched_total": sum(row["filter_match"] for row in rows)})

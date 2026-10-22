@@ -1,7 +1,5 @@
 let projectList = [];
 let serverInfo = {};
-let tmuxSessions = [];
-let storageLogEntries = [];
 let storageSort = "size_desc";
 let storagePage = 1;
 let memoryHistory = [];
@@ -33,15 +31,8 @@ function toast(message, type = "info") {
     setTimeout(() => item.remove(), 180);
   }, 3000);
 }
-async function api(url, opts = {}) {
-  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
-  const j = await r.json();
-  if (!r.ok) throw Error(j.error || "请求失败");
-  return j;
-}
-function esc(s = "") {
-  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-}
+const api = ReleaseLite.request;
+const esc = ReleaseLite.escapeHtml;
 function memoryNumber(n) {
   return n == null ? "-" : (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
 }
@@ -82,10 +73,7 @@ function parseSubprojectOptions(value) {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((display) => {
-      const [command, ...label] = display.split(/\s+/);
-      return { command, display, label: label.join(" ") };
-    });
+    .map((display) => ({ command: display.split(/\s+/, 1)[0], display }));
 }
 function activatePage(page) {
   if (page !== "detail") closeTerminal();
@@ -100,6 +88,7 @@ function activatePage(page) {
   window.scrollTo({ top: 0, behavior: "smooth" });
   if (page === "tmux") setTimeout(loadTmuxSessions, 0);
   if (page === "storage") setTimeout(loadStorageLogs, 0);
+  if (page === "operations") loadOperations();
 }
 function navigate(route) {
   const hash = "#/" + route;
@@ -174,6 +163,13 @@ async function refresh() {
           .join("")
       : '<span class="muted">还没有项目，前往项目管理页新建一个项目。</span>';
     renderProjects();
+    if ($("#operations-page").classList.contains("active")) await loadOperations();
+  } catch (e) {
+    console.error(e);
+  }
+}
+async function loadOperations() {
+  try {
     const ops = await api("/api/operations");
     $("#operations").innerHTML =
       ops
@@ -183,7 +179,7 @@ async function refresh() {
         )
         .join("") || '<span class="muted">暂无操作记录</span>';
   } catch (e) {
-    console.error(e);
+    $("#operations").textContent = `读取操作记录失败：${e.message}`;
   }
 }
 function card(p) {
@@ -220,7 +216,7 @@ async function loadTmuxSessions() {
   if (!target) return;
   try {
     const result = await api("/api/tmux/sessions");
-    tmuxSessions = result.sessions;
+    const tmuxSessions = result.sessions;
     target.innerHTML = tmuxSessions.length
       ? tmuxSessions
           .map(
@@ -293,7 +289,7 @@ async function loadStorageLogs() {
   if (projectFilter.value) params.set("project_id", projectFilter.value);
   try {
     const result = await api(`/api/storage/logs?${params}`);
-    storageLogEntries = result.items;
+    const storageLogEntries = result.items;
     storagePage = result.page;
     target.innerHTML = storageLogEntries.length
       ? storageLogEntries.map((item) => `<tr><td><input class="storage-log-select" type="checkbox" value="${esc(item.name)}" aria-label="选择 ${esc(item.name)}" onchange="toggleStorageLogSelection()"></td><td>${esc(item.project_name)}</td><td>${esc(item.kind_label)}</td><td>${fileSize(item.size)}</td><td>${esc(item.updated_at)}</td><td class="mono">${esc(item.name)}</td></tr>`).join("")
@@ -582,7 +578,7 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   const topDeploy = !isNew && p.is_git ? `<button class="btn btn-primary btn-sm" onclick="act(${p.id},'deploy')">更新代码</button>` : "";
   $("#details").innerHTML =
     `<div class="detail-topline"><div><b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions">${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div><nav class="detail-tabs"><button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息</button><button class="detail-tab ${tab === "config" ? "active" : ""}" onclick="showDetailTab('config')">项目配置</button><button class="detail-tab ${tab === "logs" ? "active" : ""}" onclick="showDetailTab('logs')">日志</button>${!isNew && (x.running || updating) ? `<button class="detail-tab ${tab === "terminal" ? "active" : ""}" onclick="showDetailTab('terminal')">${updating ? "依赖更新终端" : "终端"}</button>` : ""}</nav><section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section><section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${configForm(p, isNew)}</section><section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && (x.running || updating) ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
-  setupProjectOptions(p);
+  setupProjectOptions();
   if (!isNew && (x.running || updating) && tab === "terminal") setTimeout(() => setupProjectTerminal(p.id, updating ? "dependencies" : "project"), 0);
 }
 function accessLinks(ports) {
@@ -594,36 +590,10 @@ function accessLinks(ports) {
     )
     .join("");
 }
-function setupProjectOptions(project) {
-  const isGit = Boolean(project.is_git);
-  const form = $("#projectForm");
-  if (!form) return;
-  const mode = document.createElement("label");
-  mode.className = "check non-git-mode";
-  mode.innerHTML = `<input id="non_git" type="checkbox" ${isGit ? "" : "checked"} onchange="toggleGitProject()"> 非 Git 项目`;
-  form.insertBefore(mode, form.firstChild.nextSibling);
-  ["branch", "pre_deploy_hook", "post_deploy_hook", "git_webhook_secret", "auto_deploy"].forEach((id) => {
-    const field = $("#" + id);
-    if (field) field.closest("label").classList.add("git-config-field");
-  });
-  const rootLabel = $("#root_path")?.closest("label");
-  if (rootLabel && !$("#directoryBrowseButton")) {
-    const button = document.createElement("button");
-    button.id = "directoryBrowseButton";
-    button.type = "button";
-    button.className = "btn btn-outline-secondary btn-sm directory-browse-button";
-    button.innerHTML = '<i class="bi bi-folder2-open"></i> 选择服务器目录';
-    button.onclick = () => browseDirectories($("#root_path")?.value.trim() || "");
-    rootLabel.insertAdjacentElement("afterend", button);
-  }
-  if (rootLabel && !$("#runtimeConfig")) {
-    const runtime = document.createElement("section");
-    runtime.id = "runtimeConfig";
-    runtime.className = "runtime-config";
-    runtime.innerHTML = `<div class="runtime-config-grid"><label>运行环境<select id="runtime" onchange="toggleRuntimeConfig()"><option value="python" ${project.runtime === "python" ? "selected" : ""}>Python</option><option value="node" ${project.runtime === "node" ? "selected" : ""}>Node.js</option><option value="generic" ${project.runtime === "generic" ? "selected" : ""}>通用命令行</option></select></label><div id="nodeRuntimeFields"><label>Node.js 版本<select id="node_version"><option value="">正在读取 NVM 已安装版本…</option></select></label><label>更新依赖命令<input id="node_dependency_command" value="${esc(project.node_dependency_command || "")}" placeholder="例如：pnpm install --frozen-lockfile"></label><span class="hint">选择的 Node.js 版本会用于执行此命令。</span></div><div id="pythonRuntimeFields"><label>Python 命令<input id="python_executable" value="${esc(project.python_executable || "python3")}" placeholder="python3"></label><label>虚拟环境目录<input id="venv_path" value="${esc(project.venv_path || ".venv")}" placeholder=".venv"><span class="hint">相对项目目录</span></label><label>pip 依赖文件<input id="requirements_file" value="${esc(project.requirements_file || "requirements.txt")}" placeholder="requirements.txt"><span class="hint">相对项目目录</span></label><label class="check"><input id="auto_install_dependencies" type="checkbox" ${project.auto_install_dependencies ? "checked" : ""}> 更新代码时自动安装 pip 依赖</label></div><p id="genericRuntimeHint" class="hint">直接执行启动命令，适用于 Docker、Java、Go、Shell 等任意运行方式。</p></div>`;
-    $("#directoryBrowseButton").insertAdjacentElement("afterend", runtime);
-  }
-  loadNodeVersions(project.node_version || "");
+function runtimeConfig(project) {
+  return `<section id="runtimeConfig" class="runtime-config"><div class="runtime-config-grid"><label>运行环境<select id="runtime" onchange="toggleRuntimeConfig()"><option value="python" ${project.runtime === "python" ? "selected" : ""}>Python</option><option value="node" ${project.runtime === "node" ? "selected" : ""}>Node.js</option><option value="generic" ${project.runtime === "generic" ? "selected" : ""}>通用命令行</option></select></label><div id="nodeRuntimeFields"><label>Node.js 版本<select id="node_version"><option value="${esc(project.node_version || "")}">${esc(project.node_version || "不指定（使用系统 PATH）")}</option></select></label><label>更新依赖命令<input id="node_dependency_command" value="${esc(project.node_dependency_command || "")}" placeholder="例如：pnpm install --frozen-lockfile"></label><span class="hint">选择的 Node.js 版本会用于执行此命令。</span></div><div id="pythonRuntimeFields"><label>Python 命令<input id="python_executable" value="${esc(project.python_executable || "python3")}" placeholder="python3"></label><label>虚拟环境目录<input id="venv_path" value="${esc(project.venv_path || ".venv")}" placeholder=".venv"><span class="hint">相对项目目录</span></label><label>pip 依赖文件<input id="requirements_file" value="${esc(project.requirements_file || "requirements.txt")}" placeholder="requirements.txt"><span class="hint">相对项目目录</span></label><label class="check"><input id="auto_install_dependencies" type="checkbox" ${project.auto_install_dependencies ? "checked" : ""}> 更新代码时自动安装 pip 依赖</label></div><p id="genericRuntimeHint" class="hint">直接执行启动命令，适用于 Docker、Java、Go、Shell 等任意运行方式。</p></div></section>`;
+}
+function setupProjectOptions() {
   toggleRuntimeConfig();
   toggleSubprojectsConfig();
   toggleGitProject();
@@ -633,6 +603,7 @@ function toggleRuntimeConfig() {
   $("#pythonRuntimeFields").hidden = runtime !== "python";
   $("#nodeRuntimeFields").hidden = runtime !== "node";
   $("#genericRuntimeHint").hidden = runtime !== "generic";
+  if (runtime === "node") loadNodeVersions();
 }
 function toggleSubprojectsConfig() {
   const enabled = $("#subprojects_enabled")?.checked;
@@ -643,9 +614,11 @@ function toggleSubprojectsConfig() {
   if (input) input.required = enabled;
   if (scriptsDiscovery) scriptsDiscovery.hidden = enabled;
 }
-async function loadNodeVersions(selectedVersion) {
+async function loadNodeVersions() {
   const select = $("#node_version");
-  if (!select) return;
+  if (!select || select.dataset.loaded) return;
+  select.dataset.loaded = "true";
+  const selectedVersion = select.value;
   try {
     const data = await api("/api/node-versions");
     const options = data.versions.length
@@ -654,7 +627,7 @@ async function loadNodeVersions(selectedVersion) {
     select.innerHTML = `<option value="">不指定（使用系统 PATH）</option>${options}`;
     if (!data.versions.length) toast("未在 NVM 目录中找到已安装的 Node.js 版本", "error");
   } catch (e) {
-    select.innerHTML = '<option value="">无法读取 NVM 版本</option>';
+    delete select.dataset.loaded;
     toast(e.message, "error");
   }
 }
@@ -704,9 +677,9 @@ function selectDirectory(path) {
 function configForm(p, isNew) {
   const v = (k) => esc(p[k] || "");
   const subprojectsConfig = `<label class="check"><input id="subprojects_enabled" type="checkbox" ${p.subprojects_enabled ? "checked" : ""} onchange="toggleSubprojectsConfig()"> 启用子项目</label><label id="subprojectsField">子项目配置 <span class="hint">每行填写“命令 label”；label 可省略，启动命令可使用 {{project}}</span><textarea id="subprojects" placeholder="kp 知识包后台&#10;bs 书架&#10;ss">${v("subprojects")}</textarea></label>`;
-  const advancedConfig = `<details class="advanced-config"><summary>高级配置</summary><div class="advanced-config-content"><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label>更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label>更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label>GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><label class="check"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label></div></details>`;
+  const advancedConfig = `<details class="advanced-config"><summary>高级配置</summary><div class="advanced-config-content"><label>停止命令（可选）<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}"></label><div class="form-grid"><label class="git-config-field">更新代码前钩子<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea></label><label class="git-config-field">更新代码后钩子<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea></label></div><label>环境变量 <span class="hint">每行 KEY=value</span><textarea id="env_vars" placeholder="PORT=3000&#10;NODE_ENV=production">${v("env_vars")}</textarea></label><label class="git-config-field">GitHub webhook 签名密钥（可选）<input id="git_webhook_secret" type="password" value="${v("git_webhook_secret")}"></label><label class="check git-config-field"><input id="auto_deploy" type="checkbox" ${p.auto_deploy ? "checked" : ""}> 收到 webhook 后自动更新代码</label></div></details>`;
   const autoRestartConfig = `<div class="check-row"><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div>`;
-  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label>Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><label>启动命令 <span class="hint">在项目目录中执行；子项目可用 {{project}}</span><input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}"></label><div id="scriptsDiscovery" class="scripts"><button type="button" style="width:200px;" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option>可选：选择发现的脚本</option></select></div>${subprojectsConfig}${advancedConfig}${autoRestartConfig}<footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
+  return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)"><input id="id" type="hidden" value="${v("id")}"><label class="check non-git-mode"><input id="non_git" type="checkbox" ${p.is_git ? "" : "checked"} onchange="toggleGitProject()"> 非 Git 项目</label><div class="form-grid"><label>项目名称<input id="name" required value="${v("name")}"></label><label class="git-config-field">Git 分支<input id="branch" value="${v("branch") || "main"}"></label></div><label>服务器项目目录（绝对路径）<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}"></label><button id="directoryBrowseButton" class="btn btn-outline-secondary btn-sm directory-browse-button" type="button" onclick="browseDirectories($('#root_path').value.trim())"><i class="bi bi-folder2-open"></i> 选择服务器目录</button>${runtimeConfig(p)}<label>启动命令 <span class="hint">在项目目录中执行；子项目可用 {{project}}</span><input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}"></label><div id="scriptsDiscovery" class="scripts"><button type="button" onclick="loadScripts()">发现目录脚本</button><select id="scriptSelect" onchange="useScript()"><option value="">可选：选择发现的脚本</option></select></div>${subprojectsConfig}${advancedConfig}${autoRestartConfig}<footer><button type="button" onclick="showPage('projects')">取消</button><button class="primary" type="submit">${isNew ? "创建项目" : "保存配置"}</button></footer></form>`;
 }
 function showDetailTab(tab) {
   const id = $("#id")?.value || "new";
@@ -722,7 +695,7 @@ async function loadScripts() {
   if (!root) return toast("请先填写项目目录", "error");
   try {
     const list = await api("/api/discover-scripts", { method: "POST", body: JSON.stringify({ root_path: root }) });
-    $("#scriptSelect").innerHTML = "<option>可选：选择发现的脚本</option>" + list.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+    $("#scriptSelect").innerHTML = '<option value="">可选：选择发现的脚本</option>' + list.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
   } catch (e) {
     toast(e.message, "error");
   }

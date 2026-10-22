@@ -2,14 +2,13 @@
 
 import fcntl
 import json
-import os
-import tempfile
 from pathlib import Path
 
 from .conditions import normalize_conditions
+from .storage import write_json
 
 
-FILTER_KEYS = ("q", "project", "version", "person", "status", "priority", "environment", "hierarchy", "scope", "include_family")
+FILTER_KEYS = ("q", "project", "version", "person", "status", "priority", "environment", "hierarchy", "scope", "include_family", "version_desc")
 AUTO_SYNC_CHILDREN = ("requirements", "bugs")
 
 
@@ -24,6 +23,8 @@ def normalize_preferences(payload):
         value = payload.get("filters", {}).get(key, "")
         if key == "include_family" and value not in ("", "0", "1"):
             raise ValueError("父记录和兄弟元素开关格式不正确")
+        if key == "version_desc" and value not in ("", "0", "1"):
+            raise ValueError("按版本倒序开关格式不正确")
         if key == "project" and isinstance(value, list) and all(isinstance(item, str) for item in value):
             filters[key] = list(dict.fromkeys(item for item in value if item))
         elif isinstance(value, str):
@@ -43,7 +44,7 @@ def normalize_preferences(payload):
         rules = []
         for key in FILTER_KEYS:
             value = filters.get(key)
-            if key in ("q", "include_family") or (key == "project" and projects) or not value:
+            if key in ("q", "include_family", "version_desc") or (key == "project" and projects) or not value:
                 continue
             rules.append({"field": key, "operator": "includes", "values": value if isinstance(value, list) else [value]})
         condition_filter = {"logic": "and", "rules": rules}
@@ -98,15 +99,7 @@ class PreferenceStore:
                         saved[child] = {**normalize_preferences(saved.get(child, {})), "auto_sync": payload["auto_sync"]}
                 # The parent is always derived from both children; commit the linkage atomically.
                 saved["overview"] = {**normalize_preferences(saved.get("overview", {})), "auto_sync": auto_sync_settings(saved)["overview"]}
-                temporary_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=self.directory, suffix=".tmp", delete=False) as stream:
-                        temporary_path = Path(stream.name)
-                        json.dump(saved, stream, ensure_ascii=False, indent=2)
-                    os.replace(temporary_path, path)
-                finally:
-                    if temporary_path is not None:
-                        temporary_path.unlink(missing_ok=True)
+                write_json(path, saved, indent=2)
                 return preference_response(saved, kind)
             finally:
                 fcntl.flock(lock, fcntl.LOCK_UN)
