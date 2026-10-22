@@ -26,6 +26,8 @@ import psutil
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, url_for
 from flask_socketio import SocketIO
 
+from issue_management import init_app as init_issue_management
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -37,6 +39,7 @@ DEFAULT_BROWSE_ROOTS = ("/srv", "/opt", "/var/www", str(Path.home()))
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("RELEASE_LITE_SECRET", secrets.token_hex(32))
+init_issue_management(app, DATA_DIR)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 deploy_locks = {}
 dependency_locks = {}

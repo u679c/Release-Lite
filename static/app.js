@@ -89,6 +89,7 @@ function parseSubprojectOptions(value) {
 }
 function activatePage(page) {
   if (page !== "detail") closeTerminal();
+  if (page !== "issues") document.querySelectorAll("[data-issue-kind]").forEach((item) => item.classList.remove("active"));
   document.querySelectorAll(".page-view").forEach((x) => x.classList.toggle("active", x.id === page + "-page"));
   document.querySelectorAll("[data-page]").forEach((x) => x.classList.toggle("active", x.dataset.page === page));
   if (["tmux", "storage"].includes(page)) {
@@ -115,8 +116,16 @@ function toggleMoreMenu() {
   $(".more-menu-toggle")?.classList.toggle("open", !menu.hidden);
 }
 async function applyRoute() {
-  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const route = location.hash.replace(/^#\/?/, "");
+  const queryIndex = route.indexOf("?");
+  const path = queryIndex < 0 ? route : route.slice(0, queryIndex);
+  const parameters = new URLSearchParams(queryIndex < 0 ? "" : route.slice(queryIndex + 1));
+  const parts = path.split("/").filter(Boolean);
   const page = parts[0] || "overview";
+  if (["issues", "requirements", "bugs"].includes(page)) {
+    activatePage("issues");
+    return IssueManagement.open(page === "issues" ? "overview" : page, parameters);
+  }
   if (page !== "detail") return activatePage(["overview", "projects", "operations", "tmux", "storage"].includes(page) ? page : "overview");
   const id = parts[1];
   const tab = ["info", "config", "logs", "terminal"].includes(parts[2]) ? parts[2] : "info";
@@ -794,7 +803,12 @@ async function rollback(pid, did) {
     details(pid);
   }
 }
-refresh().then(applyRoute);
+if (/^#\/?(?:issues|requirements|bugs)(?:[/?]|$)/.test(location.hash)) {
+  applyRoute();
+  refresh();
+} else {
+  refresh().then(applyRoute);
+}
 window.addEventListener("hashchange", applyRoute);
 window.addEventListener("resize", resizeTerminal);
 setInterval(refresh, 10000);
