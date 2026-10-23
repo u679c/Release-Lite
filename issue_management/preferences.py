@@ -8,8 +8,18 @@ from .conditions import normalize_conditions
 from .storage import write_json
 
 
-FILTER_KEYS = ("q", "project", "version", "person", "status", "priority", "environment", "hierarchy", "scope", "include_family", "version_desc")
+FILTER_KEYS = ("q", "project", "version", "person", "status", "priority", "environment", "hierarchy", "scope", "include_family", "version_desc", "sort_by", "sort_order")
 AUTO_SYNC_CHILDREN = ("requirements", "bugs")
+
+
+def requirement_sort(filters):
+    sort_by = filters.get("sort_by") or "version"
+    sort_order = filters.get("sort_order") or ("desc" if filters.get("version_desc") == "1" else "asc")
+    if sort_by not in ("version", "priority"):
+        raise ValueError("需求排序字段不正确")
+    if sort_order not in ("asc", "desc"):
+        raise ValueError("需求排序方向不正确")
+    return sort_by, sort_order
 
 
 def normalize_preferences(payload):
@@ -31,6 +41,8 @@ def normalize_preferences(payload):
             filters[key] = value
         else:
             raise ValueError("筛选值格式不正确")
+    filters["sort_by"], filters["sort_order"] = requirement_sort(filters)
+    filters.pop("version_desc", None)
     projects = payload.get("requirement_projects", [])
     if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
         raise ValueError("项目多选配置格式不正确")
@@ -44,7 +56,7 @@ def normalize_preferences(payload):
         rules = []
         for key in FILTER_KEYS:
             value = filters.get(key)
-            if key in ("q", "include_family", "version_desc") or (key == "project" and projects) or not value:
+            if key in ("q", "include_family", "version_desc", "sort_by", "sort_order") or (key == "project" and projects) or not value:
                 continue
             rules.append({"field": key, "operator": "includes", "values": value if isinstance(value, list) else [value]})
         condition_filter = {"logic": "and", "rules": rules}

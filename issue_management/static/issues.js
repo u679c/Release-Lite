@@ -30,15 +30,19 @@ window.IssueManagement = (() => {
     submittingBug = null,
     bugDetailKey = "";
   let creatingDiscussion = "";
+  let savingRequirementPriority = false;
   const selectedBugs = new Set();
   let bugSelectionScope = "";
   let attachmentViewer = null;
   const collapsedRequirements = new Set();
   const collapsedVersions = new Set();
   const submittingRequirements = new Set();
-  const preferenceKeys = ["q", "include_family", "version_desc"];
+  const selectedRequirements = new Set();
+  const canSubmitRequirement = (row) => row.can_submit_testing === true;
+  let requirementSelectionScope = "";
+  const preferenceKeys = ["q", "include_family", "sort_by", "sort_order"];
   const conditionFields = ["project", "version", "person", "status", "priority", "environment", "hierarchy", "scope"];
-  const urlFilterKeys = ["q", "created_from", "created_to", "include_family", "version_desc", ...conditionFields];
+  const urlFilterKeys = ["q", "created_from", "created_to", "include_family", "version_desc", "sort_by", "sort_order", "dashboard_scope", "test_date", ...conditionFields];
   const workspace = find("#issueWorkspace");
   const workspaceResizer = find("#issueWorkspaceResizer");
   const workspaceRatioKey = "release-lite-bug-workspace-ratio";
@@ -142,6 +146,7 @@ window.IssueManagement = (() => {
   const names = (people) => (people || []).map((person) => person.name || person.id).join("、");
   const list = (values) => (values?.length ? values.join("、") : "");
   const badge = (value, tone = "") => (value ? `<span class="issue-badge ${tone}">${escape(value)}</span>` : "");
+  const priorityBadge = (value, label = value || "未设置") => `<span class="issue-badge issue-priority-tag" data-priority="${escape(value || "")}">${escape(label)}</span>`;
   const statusTag = (value) => (value ? `<span class="issue-status-tag" data-status="${escape(value)}">${escape(value)}</span>` : "");
   const testDeadline = (row) =>
     row.test_deadline ? `<span class="issue-test-deadline" data-tone="${escape(row.test_deadline_tone || "")}">${date(row.test_deadline)}</span>` : "";
@@ -290,6 +295,8 @@ window.IssueManagement = (() => {
     const selectionScope = bugSelectionKey();
     if (selectionScope !== bugSelectionScope) selectedBugs.clear();
     bugSelectionScope = selectionScope;
+    if (selectionScope !== requirementSelectionScope) selectedRequirements.clear();
+    requirementSelectionScope = selectionScope;
     if (filters.created_from !== undefined && (!filters.created_from || !filters.created_to || filters.created_from > filters.created_to)) {
       root.setAttribute("aria-busy", "false");
       find("#issueContent").hidden = true;
@@ -297,11 +304,13 @@ window.IssueManagement = (() => {
       find("#issueSyncStatus").classList.add("issue-sync-error");
       find("#issueFilterError").textContent = "请选择完整的创建时间范围，开始日期不能晚于结束日期。";
       find("#issueFilterError").hidden = false;
+      renderRequirementSelection();
       return;
     }
     find("#issueFilterError").hidden = true;
     root.setAttribute("aria-busy", "true");
     renderBugSelection();
+    renderRequirementSelection();
     try {
       const parameters = new URLSearchParams({ kind, page });
       if (allowStaleCache) parameters.set("allow_stale", "1");
@@ -325,8 +334,14 @@ window.IssueManagement = (() => {
           return;
         }
         data = result;
+        if (kind === "requirements") {
+          filters.sort_by = result.sort_by;
+          filters.sort_order = result.sort_order;
+        }
         page = result.page;
         bugSelectionScope = bugSelectionKey();
+        if (requirementSelectionScope !== bugSelectionKey()) selectedRequirements.clear();
+        requirementSelectionScope = bugSelectionKey();
         render();
       } else {
         data = null;
@@ -343,13 +358,15 @@ window.IssueManagement = (() => {
       if (current === sequence) {
         root.setAttribute("aria-busy", "false");
         renderBugSelection();
+        renderRequirementSelection();
       }
     }
   }
   function renderFilters() {
     form.elements.condition_logic.value = conditionFilter.logic;
     form.elements.include_family.checked = filters.include_family === "1";
-    form.elements.version_desc.checked = filters.version_desc === "1";
+    form.elements.sort_by.value = filters.sort_by || "version";
+    form.elements.sort_order.value = filters.sort_order || "asc";
     if (document.activeElement !== form.elements.q) form.elements.q.value = filters.q || "";
     conditionBuilder.updateOptions(data.options);
     if (kind === "requirements") renderProjectOptions();
@@ -389,17 +406,11 @@ window.IssueManagement = (() => {
       )
       .join("");
   }
-  function metric(title, value, target, scope = "", detail = "") {
-    return `<button type="button" class="issue-metric" data-jump="${target}" data-scope="${scope}"><small>${title}</small><b>${value}</b><span class="muted">${detail || "查看对应记录"} <i class="bi bi-arrow-up-right"></i></span></button>`;
-  }
-  function chart(title, entries, chartKind, field = "status") {
-    const maximum = Math.max(1, ...entries.map((entry) => entry.count));
-    const bugStatus = chartKind === "bugs" && field === "status";
-    return `<section class="content-card issue-chart"><h3>${title}</h3>${entries.length ? entries.map((entry) => `<button type="button" class="issue-chart-row${bugStatus ? " issue-chart-status-row" : ""}" data-chart-kind="${chartKind}" data-chart-field="${field}" data-chart-value="${escape(entry.name === "未填写" ? "__empty__" : entry.name)}"><span title="${escape(entry.name)}">${bugStatus && entry.name !== "未填写" ? statusTag(entry.name) : escape(entry.name)}</span><span class="issue-bar"><span style="width:${(entry.count / maximum) * 100}%"></span></span><b>${entry.count}</b></button>`).join("") : '<p class="muted">暂无数据</p>'}</section>`;
-  }
   function tableHeader() {
     const columns =
-      kind === "requirements" ? ["标题", "优先级", "状态", "开发人员", "提测截止日期", "产品", "测试人员", "设计稿", "设计人员"] : ["标题 / 项目", "状态", "优先级", "处理人"];
+      kind === "requirements"
+        ? ["标题", filters.sort_by === "priority" ? "版本" : "优先级", "状态", "开发人员", "提测截止日期", "产品", "测试人员", "设计", "群聊"]
+        : ["标题 / 项目", "状态", "优先级", "处理人"];
     return columns
       .map(
         (label, index) =>
@@ -437,6 +448,49 @@ window.IssueManagement = (() => {
       find("#issueNext").disabled = busy || page >= data.page_count;
     }
   }
+  function renderRequirementSelection() {
+    const rows = kind === "requirements" ? data?.items || [] : [];
+    const count = rows.filter((row) => selectedRequirements.has(row.id)).length;
+    const busy = Boolean(
+      !data || searchSavePending || submittingRequirements.size || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true",
+    );
+    const button = find("#issueSubmitRequirements");
+    button.hidden = kind !== "requirements";
+    button.disabled = busy || count === 0 || !form.checkValidity() || filters.created_from > filters.created_to;
+    button.textContent = submittingRequirements.size ? "提测中…" : count ? `提测 (${count})` : "提测";
+    for (const checkbox of root.querySelectorAll("[data-requirement-check]")) {
+      checkbox.checked = selectedRequirements.has(checkbox.dataset.requirementCheck);
+      checkbox.indeterminate = false;
+      checkbox.disabled = busy;
+      checkbox.closest("tr").classList.toggle("issue-requirement-checked", checkbox.checked);
+    }
+    for (const checkbox of root.querySelectorAll("[data-version-check]")) {
+      const versionRows = rows.filter((row) => row.version_group === checkbox.dataset.versionCheck);
+      const selectedCount = versionRows.filter((row) => selectedRequirements.has(row.id)).length;
+      checkbox.checked = versionRows.length > 0 && selectedCount === versionRows.length;
+      checkbox.indeterminate = selectedCount > 0 && selectedCount < versionRows.length;
+      checkbox.disabled = busy || versionRows.length === 0;
+    }
+    for (const container of root.querySelectorAll("[data-requirement-discussion]")) {
+      const row = rows.find((item) => item.id === container.dataset.requirementDiscussion);
+      if (!row) continue;
+      const chat = row.discussion;
+      const link = chat
+        ? `<a class="issue-discussion-link" href="${escape(chat.url)}" target="_blank" rel="noopener noreferrer" title="${escape(chat.name)}"><i class="bi bi-chat-dots" aria-hidden="true"></i>打开群聊<i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>`
+        : "";
+      const label = creatingDiscussion === row.id ? "创建中…" : row.discussion_creation_pending ? "建群待确认" : row.discussion_needs_link ? "重试关联" : "创建群聊";
+      const action =
+        !chat || row.discussion_needs_link
+          ? `<button class="btn btn-outline-primary btn-sm" type="button" data-create-requirement-discussion="${escape(row.id)}" ${busy || row.discussion_creation_pending ? "disabled" : ""} title="${row.discussion_creation_pending ? "请先在飞书确认上次建群结果并关联讨论组，然后同步数据" : "邀请父需求及全部子需求的产品、开发、测试、设计人员创建群聊"}">${label}</button>`
+          : "";
+      const html = link + action;
+      if (container.innerHTML !== html) container.innerHTML = html;
+    }
+    if (kind === "requirements" && data) {
+      find("#issuePrevious").disabled = busy || page <= 1;
+      find("#issueNext").disabled = busy || page >= data.page_count;
+    }
+  }
   function rowHtml(row) {
     if (row.kind === "bugs") {
       return `<tr data-select-bug="${escape(row.id)}" class="${row.id === selectedBugId ? "issue-bug-selected" : ""}"><td><div class="issue-bug-row-heading"><input class="issue-bug-checkbox" type="checkbox" data-bug-check="${escape(row.id)}" aria-label="选择 bug：${escape(row.title || row.id)}" ${selectedBugs.has(row.id) ? "checked" : ""}><div class="issue-bug-row-content"><div class="issue-bug-row-title">${recordTitle(row)}</div><small class="muted issue-bug-row-meta">${escape([list(row.project), list(row.version)].filter(Boolean).join(" · ") || "未填写项目 / 版本")}${row.overdue ? ' <span class="text-danger">逾期</span>' : ""}</small></div></div></td><td>${statusTag(row.status) || '<span class="muted">未填写</span>'}</td><td>${badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "")}</td><td>${escape(names(row.owners)) || '<span class="muted">未分配</span>'}</td></tr>`;
@@ -448,23 +502,18 @@ window.IssueManagement = (() => {
       ? `<button type="button" class="issue-tree-toggle" data-toggle-requirement="${escape(row.id)}" aria-expanded="${!collapsed}" aria-label="${collapsed ? "展开" : "收起"}子需求"><i class="bi bi-chevron-${collapsed ? "right" : "down"}" aria-hidden="true"></i></button>`
       : '<span class="issue-tree-spacer" aria-hidden="true"></span>';
     const title = `${recordTitle(row)}${row.filter_match === false ? '<span class="issue-context-label">补充展示</span>' : ""}`;
-    const priority = badge(row.priority, ["紧急", "高"].includes(row.priority) ? "red" : "");
-    const submissionDisabled = Boolean(submittingRequirements.size || data.sync.syncing || data.sync.submitting);
-    const status =
-      !row.is_child
-        ? `<a href="#" role="button" class="issue-submit-link" data-submit-requirement="${escape(row.id)}" aria-disabled="${submissionDisabled}" ${submissionDisabled ? 'tabindex="-1"' : ""}>${submittingRequirements.has(row.id) ? "提测中…" : "提测"}</a>`
-        : statusTag(row.status);
+    const priority = priorityBadge(row.priority);
     const cells = [
-      priority,
-      status,
+      filters.sort_by === "priority" ? escape(list(row.version)) : priority,
+      statusTag(row.status),
       escape(names(row.developers)),
       testDeadline(row),
       escape(names(row.products)),
       escape(names(row.testers)),
-      safeLink(row.design, "打开设计稿"),
-      escape(names(row.designers)),
+      `<div class="issue-design-cell">${row.designers?.length ? `<span>${escape(names(row.designers))}</span>` : ""}${safeLink(row.design, "打开设计稿")}</div>`,
+      !row.is_child ? `<div class="issue-requirement-discussion" data-requirement-discussion="${escape(row.id)}"></div>` : "",
     ];
-    return `<tr${hidden ? " hidden" : ""}><td><div class="issue-record-heading" style="--issue-depth:${row.tree_depth || 0}">${toggle}<div>${title}</div></div></td>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
+    return `<tr${hidden ? " hidden" : ""}><td><div class="issue-requirement-row-heading"><input class="issue-requirement-checkbox" type="checkbox" data-requirement-check="${escape(row.id)}" aria-label="选择需求：${escape(row.title || row.id)}"><div class="issue-record-heading" style="--issue-depth:${row.tree_depth || 0}">${toggle}<div>${title}</div></div></div></td>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
   }
   function renderRows() {
     const versionLists = find("#issueVersionLists");
@@ -472,13 +521,15 @@ window.IssueManagement = (() => {
     versionLists.hidden = !grouped;
     find("#issueFlatList").hidden = grouped;
     if (grouped) {
+      for (const id of selectedRequirements) if (!data.items.some((row) => row.id === id)) selectedRequirements.delete(id);
       const rowsByVersion = new Map(data.version_groups.map((group) => [group.key, []]));
       for (const row of data.items) rowsByVersion.get(row.version_group).push(row);
       versionLists.innerHTML = data.version_groups.length
         ? data.version_groups
             .map((group) => {
               const count = `共 ${group.matched_total} 条`;
-              return `<details class="issue-version-group" data-version-group="${escape(group.key)}" ${collapsedVersions.has(group.key) ? "" : "open"}><summary><i class="bi bi-chevron-right" aria-hidden="true"></i><span class="issue-version-name">${escape(group.name)}</span><span class="muted issue-version-count">${count}</span></summary><div class="table-responsive"><table class="table align-middle mb-0 issue-table" data-kind="requirements"><thead><tr>${tableHeader()}</tr></thead><tbody>${rowsByVersion.get(group.key).map(rowHtml).join("")}</tbody></table></div></details>`;
+              const groupName = filters.sort_by === "priority" ? priorityBadge(group.key.slice("priority:".length), group.name) : escape(group.name);
+              return `<details class="issue-version-group" data-version-group="${escape(group.key)}" ${collapsedVersions.has(group.key) ? "" : "open"}><summary><input class="issue-requirement-checkbox issue-version-checkbox" type="checkbox" data-version-check="${escape(group.key)}" aria-label="选择该分组全部需求：${escape(group.name)}"><i class="bi bi-chevron-right" aria-hidden="true"></i><span class="issue-version-name">${groupName}</span><span class="muted issue-version-count">${count}</span></summary><div class="table-responsive"><table class="table align-middle mb-0 issue-table" data-kind="requirements"><thead><tr>${tableHeader()}</tr></thead><tbody>${rowsByVersion.get(group.key).map(rowHtml).join("")}</tbody></table></div></details>`;
             })
             .join("")
         : '<p class="empty-row">没有符合筛选条件的记录</p>';
@@ -489,6 +540,7 @@ window.IssueManagement = (() => {
           else collapsedVersions.add(details.dataset.versionGroup);
         });
       }
+      renderRequirementSelection();
       return;
     }
     if (kind === "bugs") {
@@ -522,6 +574,59 @@ window.IssueManagement = (() => {
         : "";
     const html = link + button;
     if (container.innerHTML !== html) container.innerHTML = html;
+  }
+  async function createRequirementDiscussion(id) {
+    const row = data?.items.find((item) => item.id === id);
+    if (
+      kind !== "requirements" ||
+      !row ||
+      row.is_child ||
+      creatingDiscussion ||
+      submittingRequirements.size ||
+      submittingBug ||
+      searchSavePending ||
+      data.sync.syncing ||
+      data.sync.submitting ||
+      root.getAttribute("aria-busy") === "true" ||
+      row.discussion_creation_pending ||
+      (row.discussion && !row.discussion_needs_link)
+    )
+      return;
+    const opening = openSequence;
+    const showStatus = (message, failed = false) => {
+      const element = find("#issueActionStatus");
+      element.textContent = message;
+      element.classList.toggle("text-danger", failed);
+      element.classList.toggle("text-success", !failed);
+      element.hidden = false;
+    };
+    creatingDiscussion = row.id;
+    form.inert = true;
+    form.elements.q.disabled = true;
+    renderRequirementSelection();
+    find("#issueSyncButton").disabled = true;
+    showStatus(row.discussion_needs_link ? "正在恢复群聊关联…" : "正在创建群聊并邀请父需求及子需求相关人员…");
+    try {
+      const result = await request(`/api/issues/requirements/${encodeURIComponent(row.id)}/discussion`, { method: "POST" });
+      if (opening !== openSequence) return;
+      const current = data?.items.find((item) => item.id === row.id);
+      if (current) Object.assign(current, { discussion: result.discussion, discussion_needs_link: false, discussion_creation_pending: false });
+      showStatus(result.warning || "群聊已关联，可点击“打开群聊”进入。", Boolean(result.warning));
+      renderRequirementSelection();
+      await load();
+    } catch (error) {
+      if (opening !== openSequence) return;
+      showStatus(`建群或关联失败：${error.message}`, true);
+      await load();
+    } finally {
+      creatingDiscussion = "";
+      if (opening === openSequence) {
+        form.inert = false;
+        form.elements.q.disabled = false;
+        renderRequirementSelection();
+        if (data) setStatus(data.sync);
+      }
+    }
   }
   async function createBugDiscussion() {
     const row = data?.items.find((item) => item.id === selectedBugId);
@@ -729,27 +834,13 @@ window.IssueManagement = (() => {
     }
   }
   function renderOverview() {
-    const counts = data.counts;
-    find("#issueMetrics").innerHTML = [
-      metric("需求记录", counts.requirements, "requirements", "", `主需求 ${counts.main} · 子需求 ${counts.children}`),
-      metric("未结项需求", counts.pending_requirements, "requirements", "pending"),
-      metric("bug 记录", counts.bugs, "bugs"),
-      metric("未结项 bug", counts.pending_bugs, "bugs", "pending"),
-      metric("紧急 / 高优先级未结项", counts.urgent, "overview", "urgent"),
-      metric("已逾期未结项", counts.overdue, "overview", "overdue"),
-    ].join("");
-    find("#issueCountNote").textContent =
-      `统计限定在所选创建时间范围内，按记录计数，主需求和子需求分别计入。${counts.missing_status} 条未填写状态，不计入未结项。逾期按北京时间判断：需求取预计结束；bug 优先取预计修复完成，未填时取截止日期。`;
-    find("#issueCharts").innerHTML =
-      chart("需求状态分布", data.charts.requirements, "requirements") +
-      chart("bug 状态分布", data.charts.bugs, "bugs") +
-      chart("各项目未结项", data.charts.projects, "overview", "project");
+    IssueDashboard.render(find("#issueDashboard"), data.dashboard);
   }
   function render() {
     find("#issueContent").hidden = false;
     renderFilters();
     const overview = kind === "overview";
-    for (const selector of ["#issueMetrics", "#issueCountNote", "#issueCharts"]) find(selector).hidden = !overview;
+    find("#issueDashboard").hidden = !overview;
     find("#issueList").hidden = overview;
     const source = find("#issueSource");
     source.hidden = overview;
@@ -782,8 +873,9 @@ window.IssueManagement = (() => {
         .join("");
     renderRows();
     const pages = data.page_count;
+    const groupLabel = filters.sort_by === "priority" ? "优先级分组" : "版本";
     find("#issuePageInfo").textContent =
-      `第 ${page} / ${pages} 页 · ${kind === "requirements" ? `共 ${data.total_versions} 个版本，每页 ${data.page_size} 个版本` : `每页 ${data.page_size} 条`}`;
+      `第 ${page} / ${pages} 页 · ${kind === "requirements" ? `共 ${data.total_versions} 个${groupLabel}，每页 ${data.page_size} 个${groupLabel}` : `每页 ${data.page_size} 条`}`;
     find("#issuePrevious").disabled = page <= 1;
     find("#issueNext").disabled = page >= pages;
   }
@@ -795,6 +887,11 @@ window.IssueManagement = (() => {
     const conditions = JSON.parse(parameters.get("condition_filter") || '{"logic":"and","rules":[]}');
     if (parameters.has("include_family") && !["0", "1"].includes(parameters.get("include_family"))) throw new Error("父记录和兄弟元素开关格式不正确");
     if (parameters.has("version_desc") && !["0", "1"].includes(parameters.get("version_desc"))) throw new Error("按版本倒序开关格式不正确");
+    if (parameters.has("version_desc") && !parameters.has("sort_order")) urlFilters.sort_order = parameters.get("version_desc") === "1" ? "desc" : "asc";
+    if (parameters.has("version_desc") && !parameters.has("sort_by")) urlFilters.sort_by = "version";
+    delete urlFilters.version_desc;
+    if (parameters.has("sort_by") && !["version", "priority"].includes(parameters.get("sort_by"))) throw new Error("需求排序字段不正确");
+    if (parameters.has("sort_order") && !["asc", "desc"].includes(parameters.get("sort_order"))) throw new Error("需求排序方向不正确");
     if (
       !conditions ||
       !["and", "or"].includes(conditions.logic) ||
@@ -840,6 +937,8 @@ window.IssueManagement = (() => {
     selectedBugId = "";
     selectedBugs.clear();
     bugSelectionScope = "";
+    selectedRequirements.clear();
+    requirementSelectionScope = "";
     bugStage = "all";
     bugDetailKey = "";
     find("#issueBugActionStatus").textContent = "";
@@ -851,6 +950,7 @@ window.IssueManagement = (() => {
     usingUrlFilters = parameters.has("condition_filter") || urlFilterKeys.some((key) => parameters.has(key));
     page = 1;
     data = null;
+    renderRequirementSelection();
     find("#issueActionStatus").hidden = true;
     find("#issueContent").hidden = true;
     find("#issueList").hidden = kind === "overview";
@@ -864,7 +964,7 @@ window.IssueManagement = (() => {
     renderTableHeader();
     find("#issueProjectMultiFilter").hidden = kind !== "requirements";
     find("#issueFamilyFilter").hidden = kind !== "requirements";
-    find("#issueVersionSort").hidden = kind !== "requirements";
+    find("#issueRequirementSort").hidden = kind !== "requirements";
     find("#issueSource").hidden = true;
     document.querySelectorAll("[data-issue-kind]").forEach((button) => button.classList.toggle("active", button.dataset.issueKind === kind));
     const menu = document.querySelector("#issueMenu");
@@ -877,16 +977,31 @@ window.IssueManagement = (() => {
         preferences = await request(`/api/issues/preferences/${kind}`);
       } catch (error) {
         if (!usingUrlFilters) throw error;
-        autoSyncError = `读取自动同步配置失败：${error.message}`;
+        autoSyncError = `读取页面配置失败：${error.message}`;
       }
       if (opening !== openSequence) return;
       applyAutoSyncPreferences(preferences);
       renderAutoSyncControl();
       autoSyncControl.disabled = !preferences;
       const saved = usingUrlFilters ? readUrlFilters(parameters) : preferences;
-      filters = usingUrlFilters ? saved.filters : { q: saved.filters.q || "", include_family: saved.filters.include_family || "0", version_desc: saved.filters.version_desc || "0", ...dateFilters };
+      filters = usingUrlFilters
+        ? saved.filters
+        : {
+            q: saved.filters.q || "",
+            include_family: saved.filters.include_family || "0",
+            sort_by: saved.filters.sort_by || "version",
+            sort_order: saved.filters.sort_order || "asc",
+            ...dateFilters,
+          };
       conditionFilter = saved.condition_filter;
       if (kind === "requirements") {
+        if (usingUrlFilters && filters.include_family === undefined) {
+          filters.include_family = preferences?.filters?.include_family || "0";
+        }
+        if (usingUrlFilters) {
+          filters.sort_by ??= preferences?.filters?.sort_by || "version";
+          filters.sort_order ??= preferences?.filters?.sort_order || "asc";
+        }
         requirementProjects = usingUrlFilters ? [...(filters.project || [])] : saved.requirement_projects;
         activeRequirementProject = usingUrlFilters ? "" : saved.active_project;
       }
@@ -920,7 +1035,8 @@ window.IssueManagement = (() => {
         control.checked = filters[control.name] === "1";
         continue;
       }
-      const value = Array.isArray(filters[control.name]) ? filters[control.name][0] || "" : filters[control.name] || "";
+      const defaultValue = { sort_by: "version", sort_order: "asc" }[control.name] || "";
+      const value = Array.isArray(filters[control.name]) ? filters[control.name][0] || defaultValue : filters[control.name] || defaultValue;
       if (control.tagName === "SELECT" && value && ![...control.options].some((option) => option.value === value)) control.add(new Option(value, value));
       control.value = value;
     }
@@ -935,17 +1051,15 @@ window.IssueManagement = (() => {
     load();
     scheduleAutoSync();
   }
-  function combineScope(target) {
-    const current = conditionFilter.rules.find((rule) => rule.field === "scope" && rule.operator === "includes")?.values[0] || "";
-    if (!target || target === "pending") return current || target;
-    if (!current || current === "pending") return target;
-    return current === target ? current : "urgent_overdue";
-  }
   function jump(target, changes, resetFilters = false) {
     const jumpFilters = resetFilters ? { created_from: filters.created_from, created_to: filters.created_to } : { ...filters };
+    // Cross-page links inherit the requirement page's saved display settings.
+    if (target === "requirements" && kind !== "requirements") {
+      for (const key of ["include_family", "version_desc", "sort_by", "sort_order"]) delete jumpFilters[key];
+    }
     const conditions = resetFilters ? { logic: "and", rules: [] } : JSON.parse(JSON.stringify(conditionFilter));
     for (const [field, value] of Object.entries(changes)) {
-      if (field === "q") jumpFilters.q = value;
+      if (["q", "dashboard_scope", "test_date"].includes(field)) jumpFilters[field] = value;
       else {
         delete jumpFilters[field];
         conditions.rules = conditions.rules.filter((rule) => rule.field !== field);
@@ -960,6 +1074,30 @@ window.IssueManagement = (() => {
     }
     navigate(`${target === "overview" ? "issues" : target}?${parameters}`);
   }
+  function requirementPriorityEditor(row) {
+    const currentPriority = row.priority || "";
+    const options = ["", ...(data.requirement_priorities || [])]
+      .map((priority) => {
+        const value = escape(priority);
+        const selected = priority === currentPriority ? "selected" : "";
+        return `<option value="${value}" data-priority="${value}" ${selected}>${escape(priority || "未设置")}</option>`;
+      })
+      .join("");
+
+    return `
+      <div class="issue-priority-editor">
+        <select
+          id="issueRequirementPriority"
+          class="form-select form-select-sm"
+          data-record-id="${escape(row.id)}"
+          data-priority="${escape(currentPriority)}"
+          aria-label="设置需求优先级，选择后自动保存"
+          ${savingRequirementPriority ? "disabled" : ""}
+        >${options}</select>
+      </div>
+      <p id="issueRequirementPriorityStatus" class="small mb-0" role="status" aria-live="polite"></p>
+    `;
+  }
   function detail(id) {
     const row = data?.items.find((item) => item.id === id);
     if (!row) return;
@@ -971,7 +1109,7 @@ window.IssueManagement = (() => {
       ["项目", escape(list(row.project))],
       ["版本", escape(list(row.version))],
       ["状态", statusTag(row.status)],
-      ["优先级", badge(row.priority)],
+      ["优先级", requirementPriorityEditor(row)],
       ["开发人员", escape(names(row.developers))],
       ["创建时间", escape(row.created_at?.replace("T", " ") || "")],
       ["计划完成", date(row.due_at || row.deadline)],
@@ -994,8 +1132,70 @@ window.IssueManagement = (() => {
     const dialog = find("#issueDetailDialog");
     if (!dialog.open) dialog.showModal();
   }
-  async function submitForTesting(id) {
-    if (submittingRequirements.size) return;
+  async function saveRequirementPriority(recordId) {
+    if (savingRequirementPriority || kind !== "requirements") return;
+    const select = find("#issueRequirementPriority");
+    if (!select || select.dataset.recordId !== recordId) return;
+    const priority = select.value;
+    const previousPriority = data?.items.find((row) => row.id === recordId)?.priority || "";
+    const opening = openSequence;
+    savingRequirementPriority = true;
+    select.disabled = true;
+    const showStatus = (message, failed = false) => {
+      if (opening !== openSequence || find("#issueRequirementPriority")?.dataset.recordId !== recordId) return;
+      const status = find("#issueRequirementPriorityStatus");
+      status.textContent = message;
+      status.classList.toggle("text-danger", failed);
+      status.classList.toggle("text-success", !failed);
+    };
+    showStatus("正在保存优先级…");
+    try {
+      const result = await request(`/api/issues/requirements/${encodeURIComponent(recordId)}/priority`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ priority }),
+      });
+      if (opening !== openSequence) return;
+      const family = new Set(result.record_ids);
+      for (const row of data?.items || []) if (family.has(row.id)) row.priority = result.priority;
+      const currentSelect = find("#issueRequirementPriority");
+      if (currentSelect && family.has(currentSelect.dataset.recordId)) {
+        currentSelect.value = result.priority;
+        currentSelect.dataset.priority = result.priority;
+      }
+      selectedRequirements.clear();
+      showStatus("优先级已保存，父子需求已同步更新。");
+      await load();
+    } catch (error) {
+      const currentSelect = find("#issueRequirementPriority");
+      if (opening === openSequence && currentSelect?.dataset.recordId === recordId) {
+        currentSelect.value = previousPriority;
+        currentSelect.dataset.priority = previousPriority;
+      }
+      showStatus(`保存失败：${error.message}`, true);
+    } finally {
+      savingRequirementPriority = false;
+      const currentSelect = find("#issueRequirementPriority");
+      if (currentSelect) currentSelect.disabled = false;
+    }
+  }
+  async function submitForTesting() {
+    if (
+      kind !== "requirements" ||
+      !data ||
+      searchSavePending ||
+      submittingRequirements.size ||
+      creatingDiscussion ||
+      data.sync.syncing ||
+      data.sync.submitting ||
+      root.getAttribute("aria-busy") === "true" ||
+      !form.checkValidity() ||
+      filters.created_from > filters.created_to
+    )
+      return;
+    const selectedRows = data.items.filter((row) => selectedRequirements.has(row.id));
+    const records = selectedRows.map((row) => ({ id: row.id, expected_status: row.status }));
+    if (!records.length) return;
     const opening = openSequence;
     const actionStatus = find("#issueActionStatus");
     const showStatus = (message, failed = false) => {
@@ -1004,24 +1204,37 @@ window.IssueManagement = (() => {
       actionStatus.classList.toggle("text-success", !failed);
       actionStatus.hidden = false;
     };
-    submittingRequirements.add(id);
-    renderRows();
+    if (selectedRows.some((row) => !canSubmitRequirement(row))) {
+      showStatus("选中记录中有不在提测前阶段的需求，请取消勾选后重试。仅产品设计中、需求待评审、待开发、开发中、开发完成可提测。", true);
+      return;
+    }
+    for (const record of records) submittingRequirements.add(record.id);
+    form.inert = true;
+    form.elements.q.disabled = true;
+    renderRequirementSelection();
     find("#issueSyncButton").disabled = true;
-    showStatus("正在将父需求及全部子需求提测…");
+    showStatus(`正在将选中的 ${records.length} 条需求提测…`);
     try {
-      const result = await request(`/api/issues/requirements/${encodeURIComponent(id)}/submit-testing`, { method: "POST" });
+      const result = await request("/api/issues/requirements/submit-testing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records }),
+      });
       if (opening !== openSequence) return;
-      showStatus(result.warning || `提测成功，父需求及子需求共 ${result.updated_count} 条记录已更新为“测试中”。`, Boolean(result.warning));
+      selectedRequirements.clear();
+      showStatus(result.warning || `提测成功，选中的 ${result.updated_count} 条记录已更新为“测试中”。`, Boolean(result.warning));
       await load();
     } catch (error) {
       if (opening !== openSequence) return;
       showStatus(`提测失败：${error.message}`, true);
       await load();
     } finally {
-      submittingRequirements.delete(id);
-      if (data) {
-        renderRows();
-        find("#issueSyncButton").disabled = data.sync.syncing || data.sync.submitting;
+      submittingRequirements.clear();
+      if (opening === openSequence) {
+        form.inert = false;
+        form.elements.q.disabled = false;
+        renderRequirementSelection();
+        if (data) setStatus(data.sync);
       }
     }
   }
@@ -1029,6 +1242,7 @@ window.IssueManagement = (() => {
     if (!event.target.name || event.target.name === "q") return;
     if (event.target.name === "condition_logic") return conditionBuilder.setLogic(event.target.value);
     filters[event.target.name] = event.target.type === "checkbox" ? (event.target.checked ? "1" : "0") : event.target.value;
+    if (["sort_by", "sort_order"].includes(event.target.name)) collapsedVersions.clear();
     if (["created_from", "created_to"].includes(event.target.name)) {
       allowStaleCache = false;
       data = null;
@@ -1042,6 +1256,8 @@ window.IssueManagement = (() => {
     selectedBugs.clear();
     renderBugSelection();
     searchSavePending = true;
+    selectedRequirements.clear();
+    renderRequirementSelection();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       searchSavePending = false;
@@ -1172,6 +1388,7 @@ window.IssueManagement = (() => {
   });
   find("#issueCloseDetail").addEventListener("click", () => find("#issueDetailDialog").close());
   find("#issueBugSkip").addEventListener("click", nextBug);
+  find("#issueSubmitRequirements").addEventListener("click", submitForTesting);
   find("#issueBugDetail").addEventListener(
     "error",
     (event) => {
@@ -1182,7 +1399,35 @@ window.IssueManagement = (() => {
     true,
   );
   root.addEventListener("change", (event) => {
+    if (event.target.matches("#issueRequirementPriority")) {
+      event.target.dataset.priority = event.target.value;
+      saveRequirementPriority(event.target.dataset.recordId);
+      return;
+    }
     const checkbox = event.target;
+    if (checkbox.matches("[data-version-check]")) {
+      if (checkbox.disabled || kind !== "requirements" || !data) return;
+      for (const row of data.items) {
+        if (row.version_group !== checkbox.dataset.versionCheck) continue;
+        if (checkbox.checked) selectedRequirements.add(row.id);
+        else selectedRequirements.delete(row.id);
+      }
+      find("#issueActionStatus").hidden = true;
+      renderRequirementSelection();
+      return;
+    }
+    if (checkbox.matches("[data-requirement-check]")) {
+      if (checkbox.disabled || kind !== "requirements" || !data) return;
+      const id = checkbox.dataset.requirementCheck;
+      for (const row of data.items) {
+        if (row.id !== id && !(row.tree_ancestors || []).includes(id)) continue;
+        if (checkbox.checked) selectedRequirements.add(row.id);
+        else selectedRequirements.delete(row.id);
+      }
+      find("#issueActionStatus").hidden = true;
+      renderRequirementSelection();
+      return;
+    }
     if (!checkbox.matches("[data-bug-check], [data-bug-select-all]") || checkbox.disabled || kind !== "bugs" || !data) return;
     const ids = checkbox.hasAttribute("data-bug-select-all") ? data.items.map((row) => row.id) : [checkbox.dataset.bugCheck];
     for (const id of ids) {
@@ -1193,18 +1438,12 @@ window.IssueManagement = (() => {
     renderBugSelection();
   });
   root.addEventListener("click", (event) => {
-    if (event.target.closest("[data-bug-check], [data-bug-select-all]")) return;
+    if (event.target.closest("[data-bug-check], [data-bug-select-all], [data-version-check]")) return;
     const title = event.target.closest("[data-detail]");
     if (title) {
       if (title.tagName === "A" && (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button !== 0)) return;
       event.preventDefault();
       detail(title.dataset.detail);
-      return;
-    }
-    const submission = event.target.closest("[data-submit-requirement]");
-    if (submission) {
-      event.preventDefault();
-      if (submission.getAttribute("aria-disabled") !== "true") submitForTesting(submission.dataset.submitRequirement);
       return;
     }
     const button = event.target.closest("button");
@@ -1224,6 +1463,10 @@ window.IssueManagement = (() => {
     }
     if (button.hasAttribute("data-create-bug-discussion")) {
       createBugDiscussion();
+      return;
+    }
+    if (button.hasAttribute("data-create-requirement-discussion")) {
+      createRequirementDiscussion(button.dataset.createRequirementDiscussion);
       return;
     }
     if (button.hasAttribute("data-retry-attachment")) {
@@ -1262,6 +1505,7 @@ window.IssueManagement = (() => {
       return;
     }
     if (button.hasAttribute("data-requirement-project")) {
+      if (submittingRequirements.size || creatingDiscussion) return;
       const project = button.dataset.requirementProject;
       requirementProjects = requirementProjects.includes(project) ? requirementProjects.filter((value) => value !== project) : [...requirementProjects, project];
       if (!requirementProjects.includes(activeRequirementProject)) activeRequirementProject = "";
@@ -1275,6 +1519,7 @@ window.IssueManagement = (() => {
       return load();
     }
     if (button.hasAttribute("data-requirement-project-tab")) {
+      if (submittingRequirements.size || creatingDiscussion) return;
       activeRequirementProject = button.dataset.requirementProjectTab;
       applyRequirementProject();
       savePreferences();
@@ -1283,22 +1528,21 @@ window.IssueManagement = (() => {
       find("#issueContent").hidden = true;
       return load();
     }
-    if (button.dataset.jump) jump(button.dataset.jump, { scope: combineScope(button.dataset.scope) });
-    if (button.dataset.chartKind)
-      jump(button.dataset.chartKind, {
-        [button.dataset.chartField]: button.dataset.chartValue,
-        ...(button.dataset.chartField === "project" ? { scope: combineScope("pending") } : {}),
+    if (button.hasAttribute("data-dashboard-scope")) {
+      jump("requirements", {
+        dashboard_scope: button.dataset.dashboardScope,
+        test_date: button.dataset.dashboardDate || "",
+        ...(button.hasAttribute("data-dashboard-project") ? { project: button.dataset.dashboardProject } : {}),
       });
+      return;
+    }
+    if (button.hasAttribute("data-dashboard-bug-status")) {
+      jump("bugs", { dashboard_scope: "bugs", test_date: "", status: button.dataset.dashboardBugStatus });
+      return;
+    }
     if (button.dataset.relatedId) {
       find("#issueDetailDialog").close();
       jump(button.dataset.relatedKind, { q: button.dataset.relatedId }, true);
-    }
-  });
-  root.addEventListener("keydown", (event) => {
-    const submission = event.target.closest("[data-submit-requirement]");
-    if (submission && event.key === " ") {
-      event.preventDefault();
-      if (submission.getAttribute("aria-disabled") !== "true") submission.click();
     }
   });
   find("#issueProjectTabs").addEventListener("keydown", (event) => {

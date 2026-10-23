@@ -17,8 +17,11 @@ from pathlib import Path
 from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
-from .conditions import matches_conditions, normalize_conditions
+from .conditions import is_high_priority, matches_conditions, normalize_conditions
+from .dashboard import DASHBOARD_SCOPES, calendar_date, matches_dashboard, summarize
 from .hierarchy import requirement_groups
+from .preferences import requirement_sort
+from .priorities import REQUIREMENT_PRIORITIES, RequirementPriorityStore
 from .storage import write_json
 
 
@@ -38,6 +41,7 @@ TERMINAL = {
     "requirements": {"已上线", "已完成", "已取消"},
     "bugs": {"已修复", "已关闭", "无需解决", "已取消", "重复bug", "转需求"},
 }
+REQUIREMENT_PRE_TEST_STATUSES = {"产品设计中", "需求待评审", "待开发", "开发中", "开发完成"}
 TEST_DEADLINE_EXEMPT_STATUSES = {
     "测试中", "用例检查", "测试完成", "预发验收", "待上线",
     "线上验收", "已上线", "已取消", "无需测试", "已完成",
@@ -59,11 +63,12 @@ TABLES = {
         "fields": {
             "title": "fld03YMwlU", "project": "fldvDGKP4K", "version": "fldS6s6p7t",
             "status": "fldb47enoE",
-            "priority": "fldc98U8Kv", "developers": "fldxzI3w8E",
+            "developers": "fldxzI3w8E",
             "products": "fld1y1zdvt", "designers": "fldxEALysv", "test_deadline": "fldq4s2d06",
             "testers": "fldjfXdcNL", "created_at": "fldrfNv4jd", "start_at": "fldPYlF2n8",
             "due_at": "fldQBKvq1R", "is_child": "fldjzBQSTT", "related": "fldlH7hHvl",
             "category": "fldJWm309G", "document": "flda2bGuqs", "design": "fldszn4N8I",
+            "discussion": "fldriiUNK7",
             **PARENT_FIELDS,
         },
     },
@@ -134,6 +139,7 @@ def parse_date_range(filters):
 class IssueService:
     def __init__(self, cache_dir):
         self.cache_dir = Path(cache_dir)
+        self.requirement_priorities = RequirementPriorityStore(self.cache_dir, REQUIREMENT_PRIORITIES)
         self.lock = threading.Lock()
         self.attachment_locks = {}
         self.snapshot = None
@@ -151,6 +157,10 @@ class IssueService:
                     for kind in ("requirements", "bugs")
                 }}
             if cached.get("schema") == SNAPSHOT_SCHEMA and isinstance(cached.get("table_sync"), dict) and all(isinstance(cached.get(k), list) for k in ("requirements", "bugs", "requirement_context")):
+                if any("discussion" not in row for row in cached["requirements"] + cached["requirement_context"]):
+                    metadata = cached["table_sync"].get("requirements")
+                    if metadata:
+                        metadata["timestamp"] = 0
                 self.snapshot = cached
         except (OSError, ValueError, TypeError):
             pass
@@ -211,7 +221,7 @@ class IssueService:
             self.sync_attempts.pop(scope, None)
 
     def _run(self, arguments, cwd, domain="base"):
-        operation = "建群" if arguments[0] == "+chat-create" else "更新" if arguments[0] == "+record-batch-update" else "下载附件" if arguments[0] == "+record-download-attachment" else "读取"
+        operation = "建群" if arguments[0] == "+chat-create" else "邀请群成员" if arguments[0] == "chat.members" else "更新" if arguments[0] == "+record-batch-update" else "下载附件" if arguments[0] == "+record-download-attachment" else "读取"
         executable = os.environ.get("RELEASE_LITE_LARK_CLI", "lark-cli")
         env = {**os.environ, "LARKSUITE_CLI_NO_UPDATE_NOTIFIER": "1", "LARKSUITE_CLI_NO_SKILLS_NOTIFIER": "1"}
         try:
@@ -231,6 +241,8 @@ class IssueService:
             error = payload.get("error") or {}
             if error.get("type") == "authorization" or error.get("missing_scopes"):
                 if domain == "im":
+                    if arguments[0] == "chat.members":
+                        raise SyncError("飞书群成员邀请权限不足或登录已失效，请为当前登录用户授权 im:chat.members:write_only 后重试。")
                     raise SyncError("飞书建群权限不足或登录已失效，请为当前登录用户授权 im:chat:create_by_user 后重试。")
                 raise SyncError("飞书登录已失效或操作权限不足，请在运行面板的服务器用户下执行 lark-cli auth status --json --verify 检查并完成授权。")
             if error.get("type") == "network":
@@ -399,8 +411,23 @@ class IssueService:
     def _write_snapshot(self, snapshot):
         write_json(self.cache_dir / "snapshot.json", snapshot)
 
-    def submit_requirement(self, record_id):
-        validate_record_id(record_id, "需求")
+    def submit_requirements(self, records):
+        if not isinstance(records, list) or not records:
+            raise ValueError("请选择要提测的需求")
+        expected = {}
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("需求提测参数格式不正确")
+            record_id = record.get("id")
+            validate_record_id(record_id, "需求")
+            if record_id in expected:
+                raise ValueError("不能重复选择同一条需求")
+            if not isinstance(record.get("expected_status"), str):
+                raise ValueError("缺少当前需求状态，请刷新后重试")
+            if record["expected_status"] not in REQUIREMENT_PRE_TEST_STATUSES:
+                raise ValueError("仅提测前的需求可以提测：产品设计中、需求待评审、待开发、开发中、开发完成。")
+            expected[record_id] = record["expected_status"]
+        record_ids = list(expected)
         with self.lock:
             if self.syncing or self.submitting:
                 raise IssueBusyError("正在同步数据或提测，请稍后重试。")
@@ -408,25 +435,17 @@ class IssueService:
         write_attempted = False
         try:
             with tempfile.TemporaryDirectory(prefix="release-lite-submit-") as directory:
-                parents = self._read_table("requirements", directory, None, record_ids=[record_id], artifact_prefix="submit-parent-")
-                if len(parents) != 1 or parents[0]["id"] != record_id:
-                    raise ValueError("父需求不存在或无权访问")
-                if self._parent_ids(parents[0]) or text(parents[0].get("is_child")) == "是":
-                    raise ValueError("只能通过父需求执行提测")
-                # Resolve all descendants from the source, independent of dates and UI filters.
-                records, pending, batch_number = {record_id: parents[0]}, [record_id], 0
-                while pending:
-                    current, pending = pending, []
-                    for offset in range(0, len(current), 50):
-                        links = [{"id": item} for item in current[offset:offset + 50]]
-                        record_filter = {"logic": "or", "conditions": [[field_id, "intersects", links] for field_id in PARENT_FIELDS.values()]}
-                        children = self._read_table("requirements", directory, None, record_filter=record_filter, artifact_prefix=f"submit-children-{batch_number}-")
-                        batch_number += 1
-                        for row in children:
-                            if row["id"] not in records:
-                                records[row["id"]] = row
-                                pending.append(row["id"])
-                record_ids = sorted(records)
+                # Update only explicitly selected records, including independently selected children.
+                current = {}
+                for offset in range(0, len(record_ids), 50):
+                    rows = self._read_table("requirements", directory, None, record_ids=record_ids[offset:offset + 50], artifact_prefix=f"submit-before-{offset}-")
+                    current.update({row["id"]: text(row.get("status")) for row in rows})
+                if current.keys() != expected.keys():
+                    raise ValueError("需求不存在或无权访问")
+                if any(current[record_id] != expected_status or current[record_id] not in REQUIREMENT_PRE_TEST_STATUSES for record_id, expected_status in expected.items()):
+                    with self.lock:
+                        self._invalidate_snapshot("requirements")
+                    raise IssueBusyError("需求状态已变化或已不在提测前阶段，请同步后重新确认。")
                 config = TABLES["requirements"]
                 for offset in range(0, len(record_ids), 200):
                     payload = {"update_records": {item: {config["fields"]["status"]: ["测试中"]} for item in record_ids[offset:offset + 200]}}
@@ -449,7 +468,7 @@ class IssueService:
                 if self.snapshot is not None:
                     snapshot = {**self.snapshot}
                     for key in ("requirements", "requirement_context"):
-                        snapshot[key] = [{**row, "status": "测试中"} if row["id"] in records else row for row in snapshot[key]]
+                        snapshot[key] = [{**row, "status": "测试中"} if row["id"] in expected else row for row in snapshot[key]]
                     self.snapshot = snapshot
                     try:
                         self._write_snapshot(snapshot)
@@ -480,9 +499,10 @@ class IssueService:
             "url": "https://applink.feishu.cn/client/chat/open?" + urlencode({"openChatId": chat_id}),
         }
 
-    def _discussion_state_path(self, record_id):
+    def _discussion_state_path(self, record_id, kind="bugs"):
         digest = hashlib.sha256(record_id.encode()).hexdigest()
-        return self.cache_dir / "discussions" / f"chat-{digest}.json"
+        prefix = "requirement-chat" if kind == "requirements" else "chat"
+        return self.cache_dir / "discussions" / f"{prefix}-{digest}.json"
 
     @staticmethod
     def _read_discussion_state(path):
@@ -500,14 +520,17 @@ class IssueService:
     def _write_discussion_state(path, state):
         write_json(path, state)
 
-    def _cache_bug_discussion(self, record_id, chat):
+    def _cache_discussion(self, kind, record_id, chat):
         warning = ""
         with self.lock:
             if self.snapshot is not None:
-                snapshot = {**self.snapshot, "bugs": [
-                    {**row, "discussion": [{"id": chat["id"], "name": chat["name"]}]} if row["id"] == record_id else row
-                    for row in self.snapshot["bugs"]
-                ]}
+                snapshot = {**self.snapshot}
+                keys = ("requirements", "requirement_context") if kind == "requirements" else ("bugs",)
+                for key in keys:
+                    snapshot[key] = [
+                        {**row, "discussion": [{"id": chat["id"], "name": chat["name"]}]} if row["id"] == record_id else row
+                        for row in self.snapshot[key]
+                    ]
                 self.snapshot = snapshot
                 try:
                     self._write_snapshot(snapshot)
@@ -516,25 +539,68 @@ class IssueService:
         return warning
 
     def create_bug_discussion(self, record_id):
-        validate_record_id(record_id, "bug ")
+        return self._create_discussion("bugs", record_id, ("creators", "owners"))
+
+    def create_requirement_discussion(self, record_id):
+        return self._create_discussion("requirements", record_id, ("products", "developers", "testers", "designers"))
+
+    def _requirement_discussion_records(self, parent, directory):
+        records, pending, batch_number = {parent["id"]: parent}, [parent["id"]], 0
+        while pending:
+            current, pending = pending, []
+            for offset in range(0, len(current), 50):
+                links = [{"id": record_id} for record_id in current[offset:offset + 50]]
+                record_filter = {"logic": "or", "conditions": [[field_id, "intersects", links] for field_id in PARENT_FIELDS.values()]}
+                children = self._read_table("requirements", directory, None, record_filter=record_filter, artifact_prefix=f"discussion-children-{batch_number}-")
+                batch_number += 1
+                for child in children:
+                    if child["id"] not in records:
+                        records[child["id"]] = child
+                        pending.append(child["id"])
+        return list(records.values())
+
+    def _invite_discussion_members(self, state_path, state, directory):
+        while state.get("remaining_members"):
+            remaining = state["remaining_members"]
+            batch = remaining[:50]
+            params = {"chat_id": state["chat"]["id"], "member_id_type": "open_id", "succeed_type": 1}
+            try:
+                result = self._run([
+                    "chat.members", "create", "--params", json.dumps(params),
+                    "--data", json.dumps({"id_list": batch}),
+                ], directory, domain="im")
+            except SyncError as exc:
+                raise SyncError(f"群聊已创建，部分成员尚未确认入群：{exc} 请点击“重试关联”继续。") from exc
+            result = result.get("data", result)
+            failed = set(result.get("invalid_id_list") or []) | set(result.get("not_existed_id_list") or []) | set(result.get("pending_approval_id_list") or [])
+            state = {**state, "remaining_members": [member for member in batch if member in failed] + remaining[50:]}
+            self._write_discussion_state(state_path, state)
+            if failed:
+                raise SyncError("群聊已创建，部分成员无法邀请或需要审批，请在飞书处理后点击“重试关联”。")
+
+    def _create_discussion(self, kind, record_id, member_fields):
+        label = "父需求" if kind == "requirements" else "bug"
+        validate_record_id(record_id, label)
         with self.lock:
             if self.syncing or self.submitting:
                 raise IssueBusyError("正在同步数据或更新记录，请稍后重试。")
             self.submitting = True
         try:
-            state_path = self._discussion_state_path(record_id)
+            state_path = self._discussion_state_path(record_id, kind)
             state_path.parent.mkdir(parents=True, exist_ok=True)
-            # Serialize the same bug across server workers as well as browser tabs.
+            # Serialize the same record across server workers as well as browser tabs.
             with state_path.with_suffix(".lock").open("a+") as guard:
                 try:
                     fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
-                    raise IssueBusyError("当前 bug 正在建群，请稍后刷新。") from exc
+                    raise IssueBusyError(f"当前{label}正在建群，请稍后刷新。") from exc
                 with tempfile.TemporaryDirectory(prefix="release-lite-discussion-") as directory:
-                    rows = self._read_table("bugs", directory, None, record_ids=[record_id], artifact_prefix="discussion-before-")
+                    rows = self._read_table(kind, directory, None, record_ids=[record_id], artifact_prefix="discussion-before-")
                     if len(rows) != 1 or rows[0]["id"] != record_id:
-                        raise ValueError("bug 不存在或无权访问")
+                        raise ValueError(f"{label}不存在或无权访问")
                     row = rows[0]
+                    if kind == "requirements" and (self._parent_ids(row) or text(row.get("is_child")) == "是"):
+                        raise ValueError("只能通过父需求创建或关联群聊")
                     chat = self._discussion_chat(row)
                     created = False
                     if not chat:
@@ -543,15 +609,16 @@ class IssueService:
                         if state.get("pending") and not chat:
                             raise SyncError("上次建群结果尚未确认，请先在飞书检查并关联讨论群，然后同步数据。")
                         if not chat:
-                            people = [*(row.get("creators") or []), *(row.get("owners") or [])]
+                            records = self._requirement_discussion_records(row, directory) if kind == "requirements" else [row]
+                            people = [person for record in records for field in member_fields for person in record.get(field) or []]
                             members = list(dict.fromkeys(person["id"] for person in people))
                             if any(not isinstance(member, str) or not re.fullmatch(r"ou_[A-Za-z0-9]+", member) for member in members):
-                                raise ValueError("创建人或处理人的飞书用户 ID 不正确，请同步后重试。")
+                                raise ValueError("群成员的飞书用户 ID 不正确，请同步后重试。")
                             title = re.sub(r"^\[([\s\S]*)\]\(https?://[^\s]+\)$", r"\1", text(row.get("title"))).strip() or record_id
                             name = title[:60]
-                            arguments = ["+chat-create", "--name", name, "--description", f"Bug 讨论 · {record_id}", "--type", "private"]
+                            arguments = ["+chat-create", "--name", name, "--description", f"{'需求' if kind == 'requirements' else 'Bug'}讨论 · {record_id}", "--type", "private"]
                             if members:
-                                arguments.extend(["--users", ",".join(members)])
+                                arguments.extend(["--users", ",".join(members[:50])])
                             # Persist before calling the API; an ambiguous timeout must not create another group.
                             self._write_discussion_state(state_path, {"pending": True, "name": name})
                             try:
@@ -565,22 +632,24 @@ class IssueService:
                             if not isinstance(chat_id, str) or not chat_id.startswith("oc_"):
                                 raise SyncError("建群请求已返回，但未取得群 ID，请先在飞书确认结果。")
                             chat = self._discussion_chat({"discussion": [{"id": chat_id, "name": result.get("name") or name}]})
-                            self._write_discussion_state(state_path, {"chat": chat})
+                            state = {"chat": chat, "remaining_members": members[50:]}
+                            self._write_discussion_state(state_path, state)
                             created = True
+                        self._invite_discussion_members(state_path, state, directory)
                         # Recheck the field after group creation before writing it.
-                        latest = self._read_table("bugs", directory, None, record_ids=[record_id], artifact_prefix="discussion-check-")
+                        latest = self._read_table(kind, directory, None, record_ids=[record_id], artifact_prefix="discussion-check-")
                         if len(latest) != 1 or latest[0]["id"] != record_id:
-                            raise SyncError("群已创建，bug 记录暂时无法访问，请稍后重试关联。")
+                            raise SyncError(f"群已创建，{label}记录暂时无法访问，请稍后重试关联。")
                         existing = self._discussion_chat(latest[0])
                         if existing:
-                            warning = self._cache_bug_discussion(record_id, existing)
-                            return {"discussion": existing, "created": False, "warning": warning or (f"该 bug 已关联其他讨论群，保留原关联；新建群“{chat['name']}”未覆盖它。" if existing["id"] != chat["id"] else "")}
-                        config = TABLES["bugs"]
+                            warning = self._cache_discussion(kind, record_id, existing)
+                            return {"discussion": existing, "created": False, "warning": warning or (f"该{label}已关联其他讨论群，保留原关联；新建群“{chat['name']}”未覆盖它。" if existing["id"] != chat["id"] else "")}
+                        config = TABLES[kind]
                         payload = {"update_records": {record_id: {config["fields"]["discussion"]: [{"id": chat["id"]}]}}}
                         try:
                             self._run(["+record-batch-update", "--base-token", BASE_TOKEN, "--table-id", config["id"], "--json", json.dumps(payload, ensure_ascii=False)], directory)
                             for attempt in range(3):
-                                verified = self._read_table("bugs", directory, None, record_ids=[record_id], artifact_prefix=f"discussion-verify-{attempt}-")
+                                verified = self._read_table(kind, directory, None, record_ids=[record_id], artifact_prefix=f"discussion-verify-{attempt}-")
                                 linked = self._discussion_chat(verified[0]) if len(verified) == 1 and verified[0]["id"] == record_id else None
                                 if linked and linked["id"] == chat["id"]:
                                     chat = {**chat, "name": linked["name"] if linked["name"] != "讨论群" else chat["name"]}
@@ -591,7 +660,7 @@ class IssueService:
                                 raise SyncError("尚未读回讨论群关联")
                         except SyncError as exc:
                             raise SyncError(f"讨论群已创建，但关联未能确认：{exc} 再次点击“重试关联”将复用此群。") from exc
-                    warning = self._cache_bug_discussion(record_id, chat)
+                    warning = self._cache_discussion(kind, record_id, chat)
                     try:
                         state_path.unlink(missing_ok=True)
                     except OSError:
@@ -718,6 +787,8 @@ class IssueService:
         item = {**row, "kind": kind}
         for key in ("title", "status", "priority", "category", "environment", "attribute", "document", "design", "notes", "solution", "link"):
             item[key] = text(row.get(key))
+        if kind == "requirements":
+            item["priority"] = ""
         for key, names in (("project", projects), ("version", versions)):
             if kind == "bugs":
                 item[key] = [names.get(value["id"]) or f"未解析关联（{value['id']}）" for value in row.get(key) or []]
@@ -759,9 +830,26 @@ class IssueService:
             return "today"
         return "soon" if days_left < 3 else ""
 
+    def set_requirement_priority(self, record_id, priority):
+        validate_record_id(record_id, "需求")
+        with self.lock:
+            snapshot = self.snapshot or {}
+            records = snapshot.get("requirements", []) + snapshot.get("requirement_context", [])
+        try:
+            return self.requirement_priorities.set_priority(records, record_id, priority)
+        except OSError as exc:
+            raise SyncError("无法保存本地需求优先级，请稍后重试。") from exc
+
     def query(self, kind, filters, page):
         date_range = parse_date_range(filters)
+        sort_by, sort_order = requirement_sort(filters)
         condition_filter = normalize_conditions(filters.get("condition_filter"))
+        dashboard_scope = filters.get("dashboard_scope", "")
+        if dashboard_scope and dashboard_scope not in DASHBOARD_SCOPES:
+            raise ValueError("提测看板筛选范围不正确")
+        test_date = calendar_date(filters.get("test_date"))
+        if filters.get("test_date") and test_date is None:
+            raise ValueError("提测日期格式应为 YYYY-MM-DD")
         bug_stage = filters.get("bug_stage", "all")
         if kind == "bugs" and bug_stage not in BUG_STAGES:
             raise ValueError("bug 处理阶段不正确")
@@ -781,6 +869,15 @@ class IssueService:
                     }
         if not status["ready"]:
             return {"sync": status}
+        try:
+            local_priorities = self.requirement_priorities.priorities(snapshot["requirements"] + snapshot.get("requirement_context", []))
+        except OSError as exc:
+            raise SyncError("无法读取本地需求优先级，请稍后重试。") from exc
+        # Keep remote snapshots untouched: requirement priorities exist only locally.
+        snapshot = {**snapshot, **{
+            target: [dict(row, priority=local_priorities.get(row["id"], "")) for row in snapshot.get(target, [])]
+            for target in ("requirements", "requirement_context")
+        }}
         today = datetime.now(SHANGHAI).date().isoformat()
         all_rows = snapshot["requirements"] + snapshot["bugs"]
         selected = all_rows if kind == "overview" else snapshot[kind]
@@ -818,10 +915,15 @@ class IssueService:
         if scope:
             selected = [row for row in selected if {
                 "pending": row["pending"], "overdue": row["overdue"],
-                "urgent": row["pending"] and row["priority"] in ("紧急", "高"),
-                "urgent_overdue": row["overdue"] and row["priority"] in ("紧急", "高"),
+                "urgent": row["pending"] and is_high_priority(row),
+                "urgent_overdue": row["overdue"] and is_high_priority(row),
             }.get(scope, True)]
         selected = [row for row in selected if matches_conditions(row, condition_filter)]
+        if dashboard_scope or test_date:
+            selected = [row for row in selected if matches_dashboard(
+                row, dashboard_scope, test_date, date.fromisoformat(today), REQUIREMENT_PRE_TEST_STATUSES,
+                TEST_DEADLINE_EXEMPT_STATUSES - {"已取消", "无需测试"}, TERMINAL["bugs"],
+            )]
         bug_stages = {}
         if kind == "bugs":
             stages = {
@@ -838,7 +940,7 @@ class IssueService:
             "requirements": len(requirements), "bugs": len(bugs),
             "main": sum(not row["is_child"] for row in requirements), "children": sum(row["is_child"] for row in requirements),
             "pending_requirements": sum(row["pending"] for row in requirements), "pending_bugs": sum(row["pending"] for row in bugs),
-            "urgent": sum(row["pending"] and row["priority"] in ("紧急", "高") for row in selected),
+            "urgent": sum(row["pending"] and is_high_priority(row) for row in selected),
             "overdue": sum(row["overdue"] for row in selected),
             "missing_status": sum(not row["status"] for row in selected),
         }
@@ -850,6 +952,10 @@ class IssueService:
             return [{"name": name, "count": count} for name, count in counter.most_common()]
         option_rows = all_rows if kind == "overview" else snapshot[kind]
         options = {key: sorted({value for row in option_rows for value in (row.get(key) if isinstance(row.get(key), list) else [row.get(key)]) or [] if value}) for key in ("project", "version", "status", "priority", "environment")}
+        if kind == "requirements":
+            options["priority"] = list(REQUIREMENT_PRIORITIES)
+        elif kind == "overview":
+            options["priority"] = list(REQUIREMENT_PRIORITIES) + [value for value in options["priority"] if value not in REQUIREMENT_PRIORITIES]
         people = {person["id"]: person.get("name") or person["id"] for row in option_rows for person in self._assignees(row)}
         options["person"] = [{"id": key, "name": value} for key, value in sorted(people.items(), key=lambda pair: pair[1])]
         selected.sort(key=lambda row: (row.get("created_at") or "", row["id"]), reverse=True)
@@ -875,13 +981,25 @@ class IssueService:
                     if not ancestors:
                         break
                     parent = ancestors[0]
-                values = parent.get("version") or []
-                version_key = json.dumps(values, ensure_ascii=False)
-                bucket = versions.setdefault(version_key, {"key": version_key, "name": "、".join(values) or "其他版本", "groups": []})
+                if sort_by == "priority":
+                    priority = parent.get("priority") or ""
+                    version_key = "priority:" + priority
+                    group_name = priority or "未设置优先级"
+                else:
+                    values = parent.get("version") or []
+                    version_key = json.dumps(values, ensure_ascii=False)
+                    group_name = "、".join(values) or "其他版本"
+                bucket = versions.setdefault(version_key, {"key": version_key, "name": group_name, "groups": []})
                 bucket["groups"].append(group)
             ordered_versions = list(versions.values())
-            if filters.get("version_desc") == "1":
-                ordered_versions.sort(key=lambda bucket: (bucket["key"] == "[]", version_sort_key(bucket["name"])), reverse=True)
+            if sort_by == "priority":
+                assigned = [bucket for bucket in ordered_versions if bucket["key"] != "priority:"]
+                assigned.sort(key=lambda bucket: REQUIREMENT_PRIORITIES.index(bucket["name"]), reverse=sort_order == "desc")
+                ordered_versions = assigned + [bucket for bucket in ordered_versions if bucket["key"] == "priority:"]
+            else:
+                assigned = [bucket for bucket in ordered_versions if bucket["key"] != "[]"]
+                assigned.sort(key=lambda bucket: version_sort_key(bucket["name"]), reverse=sort_order == "desc")
+                ordered_versions = [bucket for bucket in ordered_versions if bucket["key"] == "[]"] + assigned
             total_versions = len(versions)
             page_size = VERSION_PAGE_SIZE
             page_count = max(1, (total_versions + page_size - 1) // page_size)
@@ -902,13 +1020,15 @@ class IssueService:
         for row in page_rows:
             related = [{"id": related_id, "title": index.get(related_id, {}).get("title") or related_id, "kind": index.get(related_id, {}).get("kind", "bugs" if row["kind"] == "requirements" else "requirements")} for related_id in row["related"]]
             item = {**row, "related": related, "test_deadline_tone": self._test_deadline_tone(row, today)}
-            if row["kind"] == "bugs":
+            if row["kind"] == "requirements":
+                item["can_submit_testing"] = row["status"] in REQUIREMENT_PRE_TEST_STATUSES
+            if row["kind"] == "bugs" or not row["is_child"]:
                 item["discussion"] = self._discussion_chat(row)
                 item["discussion_needs_link"] = False
                 item["discussion_creation_pending"] = False
                 if not item["discussion"]:
                     try:
-                        state = self._read_discussion_state(self._discussion_state_path(row["id"]))
+                        state = self._read_discussion_state(self._discussion_state_path(row["id"], row["kind"]))
                     except SyncError:
                         state = {"pending": True}
                     if state.get("chat"):
@@ -916,6 +1036,7 @@ class IssueService:
                         item["discussion_needs_link"] = True
                     else:
                         item["discussion_creation_pending"] = bool(state.get("pending"))
+            if row["kind"] == "bugs":
                 item["attachments"] = []
                 for attachment in row.get("attachments") or []:
                     mime_type = self._attachment_type(attachment)
@@ -928,8 +1049,13 @@ class IssueService:
             items.append(item)
         return {
             "sync": status, "options": options, "counts": counts, "items": items, "bug_stages": bug_stages,
+            "dashboard": summarize(
+                requirements, bugs, date.fromisoformat(today), REQUIREMENT_PRE_TEST_STATUSES,
+                TEST_DEADLINE_EXEMPT_STATUSES - {"已取消", "无需测试"}, TERMINAL["bugs"],
+            ) if kind == "overview" else None,
             "total": total, "matched_total": matched_total, "total_groups": total_groups,
             "version_groups": version_groups, "total_versions": total_versions,
+            "sort_by": sort_by, "sort_order": sort_order, "requirement_priorities": list(REQUIREMENT_PRIORITIES),
             "page": page, "page_size": page_size, "page_count": page_count,
             "charts": {"requirements": groups(requirements, "status"), "bugs": groups(bugs, "status"), "projects": groups([row for row in selected if row["pending"]], "project")},
             "sources": {key: SOURCE_URL + "?" + urlencode({"table": TABLES[key]["id"], "view": TABLES[key]["view"]}) for key in ("requirements", "bugs")},

@@ -6,7 +6,7 @@ window.IssueConditionBuilder = {
     const fieldLabels = () => ({ project: "项目", version: "版本", person: kind === "requirements" ? "开发人员" : kind === "bugs" ? "处理人" : "开发人员 / 处理人", status: "状态", priority: "优先级", environment: "发现环境", hierarchy: "需求层级", scope: "待办范围" });
     function choices(field) {
       if (field === "hierarchy") return [["main", "主需求"], ["child", "子需求"]];
-      if (field === "scope") return [["pending", "未结项"], ["urgent", "紧急 / 高优先级未结项"], ["overdue", "已逾期未结项"], ["urgent_overdue", "紧急 / 高优先级且逾期"]];
+      if (field === "scope") return [["pending", "未结项"], ["urgent", kind === "requirements" ? "P0 / P1 未结项" : "高优先级未结项"], ["overdue", "已逾期未结项"], ["urgent_overdue", kind === "requirements" ? "P0 / P1 且逾期" : "高优先级且逾期"]];
       return [["__empty__", "未填写"], ...(options[field] || []).map((value) => field === "person" ? [value.id, value.name] : [value, value])];
     }
     function ruleChoices(rule) {

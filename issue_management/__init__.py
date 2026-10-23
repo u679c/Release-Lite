@@ -59,9 +59,20 @@ def issue_sync():
     return jsonify(service.status(date_range, include_family, kind))
 
 
-@blueprint.post("/api/issues/requirements/<record_id>/submit-testing")
-def submit_requirement(record_id):
-    return jsonify(current_app.extensions["issue_management"].submit_requirement(record_id))
+@blueprint.put("/api/issues/requirements/<record_id>/priority")
+def update_requirement_priority(record_id):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="需求优先级参数格式不正确"), 400
+    return jsonify(current_app.extensions["issue_management"].set_requirement_priority(record_id, payload.get("priority")))
+
+
+@blueprint.post("/api/issues/requirements/submit-testing")
+def submit_requirements():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="提测参数格式不正确"), 400
+    return jsonify(current_app.extensions["issue_management"].submit_requirements(payload.get("records")))
 
 
 @blueprint.post("/api/issues/bugs/<record_id>/status")
@@ -87,6 +98,11 @@ def update_bug_statuses():
 @blueprint.post("/api/issues/bugs/<record_id>/discussion")
 def create_bug_discussion(record_id):
     return jsonify(current_app.extensions["issue_management"].create_bug_discussion(record_id))
+
+
+@blueprint.post("/api/issues/requirements/<record_id>/discussion")
+def create_requirement_discussion(record_id):
+    return jsonify(current_app.extensions["issue_management"].create_requirement_discussion(record_id))
 
 
 @blueprint.get("/api/issues/bugs/<record_id>/attachments/<file_token>")

@@ -1,7 +1,8 @@
 <section class="page-view issue-module" id="issues-page">
   <div class="section-heading page-heading issue-heading">
-    <label role="search"><input class="form-control form-control-sm" name="q" form="issueFilters"
-        type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID"></label>
+    <div class="issue-heading-search"><label role="search"><input class="form-control form-control-sm" name="q" form="issueFilters"
+          type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID"></label><button
+        class="btn btn-primary btn-sm" id="issueSubmitRequirements" type="button" hidden disabled>提测</button></div>
     <div class="issue-heading-actions"><a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank"
         rel="noopener noreferrer" hidden>在飞书打开 <i class="bi bi-box-arrow-up-right"></i></a><button
         class="btn btn-outline-secondary btn-sm" id="issueFilterButton" type="button" aria-haspopup="dialog"
@@ -37,8 +38,10 @@
           </div>
         </details>
       </div>
-      <label id="issueVersionSort" class="form-check issue-version-sort" hidden><input class="form-check-input"
-          type="checkbox" name="version_desc" value="1"><span class="form-check-label">按版本倒序</span></label>
+      <div id="issueRequirementSort" class="issue-requirement-sort" hidden>
+        <label>排序字段<select class="form-select" name="sort_by" aria-label="需求排序字段"><option value="version">版本</option><option value="priority">优先级</option></select></label>
+        <label>排列顺序<select class="form-select" name="sort_order" aria-label="需求排列顺序"><option value="asc">正序</option><option value="desc">倒序</option></select></label>
+      </div>
       <section class="issue-condition-builder" aria-label="筛选条件组合">
         <div class="issue-condition-heading"><span>符合以下</span><select class="form-select" name="condition_logic"
             aria-label="条件组合方式">
@@ -60,9 +63,7 @@
     </form>
   </dialog>
   <div id="issueContent" hidden>
-    <section id="issueMetrics" class="issue-metrics" aria-label="统计指标"></section>
-    <p class="muted issue-count-note" id="issueCountNote"></p>
-    <section id="issueCharts" class="issue-charts" aria-label="状态分布"></section>
+    {% include 'issue_management/dashboard.html' %}
     <section id="issueList" class="content-card issue-list-card">
 
       <div id="issueBugToolbar" class="issue-bug-toolbar" hidden>

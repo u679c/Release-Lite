@@ -6,6 +6,10 @@ import json
 CONDITION_FIELDS = {"project", "version", "person", "status", "priority", "environment", "hierarchy", "scope"}
 
 
+def is_high_priority(row):
+    return row.get("priority") in ({"P0", "P1"} if row["kind"] == "requirements" else {"紧急", "高"})
+
+
 def normalize_conditions(payload):
     if isinstance(payload, str):
         try:
@@ -41,7 +45,7 @@ def matches_conditions(row, conditions):
         elif field == "hierarchy":
             values = ["child" if row["is_child"] else "main"] if row["kind"] == "requirements" else []
         elif field == "scope":
-            urgent = row["pending"] and row["priority"] in ("紧急", "高")
+            urgent = row["pending"] and is_high_priority(row)
             values = [name for name, matched in {"pending": row["pending"], "urgent": urgent, "overdue": row["overdue"], "urgent_overdue": urgent and row["overdue"]}.items() if matched]
         else:
             value = row.get(field)

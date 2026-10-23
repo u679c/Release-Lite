@@ -1,0 +1,47 @@
+<section id="issueDashboard" class="issue-dashboard" aria-label="提测与 Bug 概况" hidden>
+  <div id="issueDashboardMetrics" class="issue-dashboard-metrics" aria-label="提测指标"></div>
+  <div class="issue-dashboard-main">
+    <section class="issue-dashboard-panel issue-dashboard-calendar-panel" aria-labelledby="issueCalendarTitle">
+      <header class="issue-dashboard-header">
+        <div class="issue-dashboard-calendar-heading">
+          <h3 id="issueCalendarTitle">本周提测日历</h3><span id="issueDashboardWeekRange"></span>
+        </div>
+        <div class="issue-dashboard-inline-legend"><span><i style="--dot-color:#5b91ff"></i>正常</span><span><i
+              style="--dot-color:#246bfe"></i>今天</span><span><i style="--dot-color:#ffc334"></i>临近 (≤3天)</span><span><i
+              style="--dot-color:#ff595f"></i>已逾期</span></div>
+      </header>
+      <div id="issueDashboardCalendar" class="issue-dashboard-calendar"></div>
+    </section>
+    <section class="issue-dashboard-panel issue-dashboard-deadlines" aria-labelledby="issueDeadlineTitle">
+      <header class="issue-dashboard-header">
+        <h3 id="issueDeadlineTitle">提测截止时间分布（未提测）</h3>
+      </header>
+      <div id="issueDashboardDeadlines"></div>
+    </section>
+  </div>
+  <div class="issue-dashboard-bottom">
+    <section class="issue-dashboard-panel" aria-labelledby="issueWeekStatusTitle">
+      <header class="issue-dashboard-header">
+        <h3 id="issueWeekStatusTitle">本周提测需求状态</h3>
+      </header>
+      <div id="issueDashboardWeekStatus"></div>
+    </section>
+    <section class="issue-dashboard-panel" aria-labelledby="issueBugStatusTitle">
+      <header class="issue-dashboard-header">
+        <h3 id="issueBugStatusTitle">正在关注的 Bug</h3>
+      </header>
+      <div id="issueDashboardBugStatus"></div>
+    </section>
+    <section class="issue-dashboard-panel issue-dashboard-risk-panel" aria-labelledby="issueRiskTitle">
+      <header class="issue-dashboard-header">
+        <h3 id="issueRiskTitle">项目提测风险 TOP5（未提测）</h3><button type="button" class="issue-dashboard-all"
+          data-dashboard-scope="pending">查看全部 <i class="bi bi-chevron-right" aria-hidden="true"></i></button>
+      </header>
+      <div id="issueDashboardProjects" class="issue-dashboard-projects"></div>
+      <div class="issue-dashboard-inline-legend issue-dashboard-risk-legend"><span><i
+            style="--dot-color:#ff595f"></i>已逾期</span><span><i style="--dot-color:#ffc334"></i>≤ 3 天</span><span><i
+            style="--dot-color:#5b91ff"></i>4 - 7 天</span><span><i style="--dot-color:#c3c9d8"></i>&gt; 7 天</span></div>
+    </section>
+  </div>
+  <p id="issueDashboardNote" class="issue-dashboard-note"></p>
+</section>
