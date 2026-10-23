@@ -1,0 +1,18 @@
+<section class="page-view active" id="overview-page">
+  <section class="metrics row g-3" id="metrics"></section>
+  <section class="content-card">
+    
+    <div class="system-grid" id="systemInfo"></div>
+    <section class="memory-monitor" id="memoryMonitor" aria-label="内存状态"></section>
+  </section>
+  <section class="content-card">
+    <div class="section-heading">
+      <div>
+        <h2>项目</h2>
+      </div>
+      <button class="btn btn-outline-primary btn-sm" onclick="showPage('projects')">查看全部</button>
+    </div>
+    <div id="projectSummary" class="summary-list"></div>
+  </section>
+  {% include 'pages/home-issues.html' %}
+</section>

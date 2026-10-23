@@ -43,10 +43,18 @@ def requirement_groups(records, matched_ids, include_family=False):
         group, pending = [], [(root_id, [])]
         while pending:
             record_id, ancestors = pending.pop()
-            group.append({
-                **index[record_id], "tree_depth": len(ancestors), "tree_ancestors": ancestors,
-                "tree_child_count": len(children[record_id]), "filter_match": record_id in matched_ids,
-            })
-            pending.extend((child_id, [*ancestors, record_id]) for child_id in sorted(children[record_id], key=sort_key))
+            group.append(
+                {
+                    **index[record_id],
+                    "tree_depth": len(ancestors),
+                    "tree_ancestors": ancestors,
+                    "tree_child_count": len(children[record_id]),
+                    "filter_match": record_id in matched_ids,
+                }
+            )
+            pending.extend(
+                (child_id, [*ancestors, record_id])
+                for child_id in sorted(children[record_id], key=sort_key)
+            )
         groups.append(group)
     return groups

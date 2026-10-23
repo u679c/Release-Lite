@@ -34,13 +34,23 @@ class RequirementPriorityStore:
 
     def _read(self):
         try:
-            payload = json.loads((self.directory / "requirement-priorities.json").read_text(encoding="utf-8"))
+            payload = json.loads(
+                (self.directory / "requirement-priorities.json").read_text(encoding="utf-8")
+            )
         except FileNotFoundError:
             return {"revision": 0, "assignments": {}}
-        if not isinstance(payload, dict) or not isinstance(payload.get("revision"), int) or not isinstance(payload.get("assignments"), dict):
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(payload.get("revision"), int)
+            or not isinstance(payload.get("assignments"), dict)
+        ):
             raise ValueError("本地需求优先级数据格式不正确")
         for value in payload["assignments"].values():
-            if not isinstance(value, dict) or value.get("priority") not in ("", *self.levels) or not isinstance(value.get("revision"), int):
+            if (
+                not isinstance(value, dict)
+                or value.get("priority") not in ("", *self.levels)
+                or not isinstance(value.get("revision"), int)
+            ):
                 raise ValueError("本地需求优先级数据格式不正确")
         return payload
 
@@ -55,7 +65,10 @@ class RequirementPriorityStore:
             assignment = payload["assignments"].get(record_id)
             if assignment and assignment["revision"] > families.get(family, {}).get("revision", -1):
                 families[family] = assignment
-        return {record_id: families.get(family, {}).get("priority", "") for record_id, family in roots.items()}
+        return {
+            record_id: families.get(family, {}).get("priority", "")
+            for record_id, family in roots.items()
+        }
 
     def set_priority(self, records, record_id, priority):
         if not isinstance(priority, str) or priority not in ("", *self.levels):
@@ -70,6 +83,9 @@ class RequirementPriorityStore:
             payload = self._read()
             payload["revision"] += 1
             for member in members:
-                payload["assignments"][member] = {"priority": priority, "revision": payload["revision"]}
+                payload["assignments"][member] = {
+                    "priority": priority,
+                    "revision": payload["revision"],
+                }
             write_json(self.directory / "requirement-priorities.json", payload, indent=2)
         return {"priority": priority, "record_ids": members}

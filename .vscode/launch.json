@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "运行发布平台",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/app.py",
+            "python": "${workspaceFolder}/.venv/bin/python3.11",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "PORT": "22993",
+                "PYTHONUNBUFFERED": "1"
+            },
+            "jinja": true,
+            "justMyCode": true,
+            "subProcess": false
+        }
+    ]
+}

@@ -10,11 +10,13 @@
     <link href="/static/vendor/xterm/xterm.css?v=5.3.0" rel="stylesheet" />
     <link href="/static/vendor/viewerjs/viewer.min.css?v=1.11.7" rel="stylesheet" />
     <link rel="stylesheet" href="/static/style.css" />
+    <link rel="stylesheet" href="/static/home-issues.css" />
     <link rel="stylesheet" href="{{ url_for('issue_management.static', filename='issues.css') }}" />
   </head>
   <body>
     <div class="app-shell">
-      <aside class="sidebar">
+      <aside class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebarToggle" type="button"   aria-controls="sidebarNav" aria-expanded="true"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
         <a
           class="brand"
           href="#"
@@ -24,28 +26,25 @@
           "
           ><span class="brand-mark">R</span><span>Release <b>Lite</b><small>发布管理台</small></span></a
         >
-        <nav class="nav flex-column" aria-label="主导航">
-          <button class="nav-link active" data-page="overview" onclick="showPage('overview')">
-            <span><i class="bi bi-speedometer2"></i></span> 首页
+        <nav class="nav flex-column" id="sidebarNav" aria-label="主导航">
+          <button class="nav-link active" data-page="overview" title="首页" aria-label="首页" onclick="showPage('overview')">
+            <span class="nav-icon"><i class="bi bi-speedometer2" aria-hidden="true"></i></span><span class="nav-label">首页</span>
           </button>
-          <button class="nav-link" data-page="projects" onclick="showPage('projects')">
-            <span><i class="bi bi-box-seam"></i></span> 项目管理
+          <button class="nav-link" data-page="projects" title="项目管理" aria-label="项目管理" onclick="showPage('projects')">
+            <span class="nav-icon"><i class="bi bi-box-seam" aria-hidden="true"></i></span><span class="nav-label">项目管理</span>
           </button>
-          <div class="issue-nav-group">
-            <button class="nav-link" type="button" data-issue-kind="overview" onclick="showPage('issues')"><span><i class="bi bi-kanban"></i></span> 需求与bug管理</button>
-            <button class="issue-menu-toggle" id="issueMenuToggle" type="button" aria-label="展开需求与bug管理子菜单" aria-controls="issueMenu" aria-expanded="false" onclick="const menu = document.querySelector('#issueMenu'); menu.hidden = !menu.hidden; this.setAttribute('aria-expanded', String(!menu.hidden))"><i class="bi bi-chevron-down"></i></button>
-          </div>
+          <button class="nav-link issue-menu-toggle" id="issueMenuToggle" type="button" data-issue-kind="overview" title="需求与bug管理" aria-label="需求与bug管理" aria-controls="issueMenu" aria-expanded="false" onclick="toggleIssueMenu()"><span class="nav-icon"><i class="bi bi-kanban" aria-hidden="true"></i></span><span class="nav-label">需求与bug管理</span><i class="bi bi-chevron-down more-menu-arrow" aria-hidden="true"></i></button>
           <div id="issueMenu" class="sidebar-submenu" hidden>
-            <button class="nav-link" type="button" data-issue-kind="requirements" onclick="showPage('requirements')"><span><i class="bi bi-card-checklist"></i></span> 需求管理</button>
-            <button class="nav-link" type="button" data-issue-kind="bugs" onclick="showPage('bugs')"><span><i class="bi bi-bug"></i></span> bug管理</button>
+            <button class="nav-link" type="button" data-issue-kind="requirements" title="需求管理" aria-label="需求管理" onclick="showPage('requirements')"><span class="nav-icon"><i class="bi bi-card-checklist" aria-hidden="true"></i></span><span class="nav-label">需求管理</span></button>
+            <button class="nav-link" type="button" data-issue-kind="bugs" title="bug管理" aria-label="bug管理" onclick="showPage('bugs')"><span class="nav-icon"><i class="bi bi-bug" aria-hidden="true"></i></span><span class="nav-label">bug管理</span></button>
           </div>
           
-          <button class="nav-link more-menu-toggle" type="button" onclick="toggleMoreMenu()"><span><i class="bi bi-three-dots"></i></span> 更多 <i class="bi bi-chevron-down more-menu-arrow"></i></button>
+          <button class="nav-link more-menu-toggle" type="button" title="更多" aria-label="更多" aria-controls="moreMenu" aria-expanded="false" onclick="toggleMoreMenu()"><span class="nav-icon"><i class="bi bi-three-dots" aria-hidden="true"></i></span><span class="nav-label">更多</span><i class="bi bi-chevron-down more-menu-arrow" aria-hidden="true"></i></button>
           <div id="moreMenu" class="sidebar-submenu" hidden>
-            <button class="nav-link" data-page="tmux" onclick="showPage('tmux')"><span><i class="bi bi-terminal"></i></span> Tmux 管理</button>
-            <button class="nav-link" data-page="storage" onclick="showPage('storage')"><span><i class="bi bi-device-hdd"></i></span> 日志 管理</button>
-            <button class="nav-link" data-page="operations" onclick="showPage('operations')">
-            <span><i class="bi bi-clock-history"></i></span> 操作记录
+            <button class="nav-link" data-page="tmux" title="Tmux 管理" aria-label="Tmux 管理" onclick="showPage('tmux')"><span class="nav-icon"><i class="bi bi-terminal" aria-hidden="true"></i></span><span class="nav-label">Tmux 管理</span></button>
+            <button class="nav-link" data-page="storage" title="日志管理" aria-label="日志管理" onclick="showPage('storage')"><span class="nav-icon"><i class="bi bi-device-hdd" aria-hidden="true"></i></span><span class="nav-label">日志管理</span></button>
+            <button class="nav-link" data-page="operations" title="操作记录" aria-label="操作记录" onclick="showPage('operations')">
+            <span class="nav-icon"><i class="bi bi-clock-history" aria-hidden="true"></i></span><span class="nav-label">操作记录</span>
           </button>
           </div>
         </nav>
@@ -53,65 +52,13 @@
       </aside>
       <div class="main-area">
         <main class="content-area">
-          <section class="page-view active" id="overview-page">
-            <section class="metrics row g-3" id="metrics"></section>
-            <section class="content-card">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">SERVER</p>
-                  <h2>设备信息</h2>
-                </div>
-                <span class="muted">内存每秒更新</span>
-              </div>
-              <div class="system-grid" id="systemInfo"></div>
-              <section class="memory-monitor" id="memoryMonitor" aria-label="内存状态"></section>
-            </section>
-            <section class="content-card">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">PROJECTS</p>
-                  <h2>项目运行概况</h2>
-                </div>
-                <button class="btn btn-outline-primary btn-sm" onclick="showPage('projects')">查看全部</button>
-              </div>
-              <div id="projectSummary" class="summary-list"></div>
-            </section>
-          </section>
-          <section class="page-view" id="projects-page">
-            <div class="section-heading page-heading project-page-heading"><div class="project-filters" role="search"><input id="projectNameFilter" class="form-control" type="search" placeholder="搜索项目名称" aria-label="搜索项目名称" oninput="filterProjects()"><select id="projectRuntimeFilter" class="form-select" aria-label="按项目类型筛选" onchange="filterProjects()"><option value="">全部类型</option><option value="python">Python</option><option value="node">Node.js</option><option value="generic">通用</option></select></div><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
-            <section class="content-card project-table-card">
-              <div class="table-responsive">
-                <table class="table align-middle project-table mb-0">
-                  <thead>
-                    <tr>
-                      <th>项目</th>
-                      <th>分支</th>
-                      <th>状态</th>
-                      <th>运行资源</th>
-                      <th>端口</th>
-                      <th class="text-end">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody id="projects"></tbody>
-                </table>
-              </div>
-            </section>
-          </section>
-          <section class="page-view" id="operations-page">
-            <div class="section-heading page-heading"><button class="btn btn-outline-secondary btn-sm" onclick="refresh()">刷新</button></div>
-            <section class="content-card"><div id="operations"></div></section>
-          </section>
-          <section class="page-view" id="tmux-page">
-            <div class="section-heading page-heading"><div><h2>Tmux 会话</h2><p class="muted mb-0">管理由 Release Lite 创建的项目终端会话。</p></div><button class="btn btn-outline-secondary btn-sm" onclick="loadTmuxSessions()"><i class="bi bi-arrow-clockwise"></i> 刷新</button></div>
-            <section class="tmux-grid" id="tmuxSessions"></section>
-          </section>
-          <section class="page-view" id="storage-page">
-            <section class="content-card storage-card"><div class="storage-toolbar"><div class="storage-filters"><label>项目：<select id="storageProjectFilter" class="form-select" aria-label="按项目筛选日志" onchange="resetStorageLogPage()"><option value="">全部项目</option></select></label><label>日志类型：<select id="storageTypeFilter" class="form-select" aria-label="按日志类型筛选" onchange="resetStorageLogPage()"><option value="">全部日志类型</option><option value="runtime">运行日志</option><option value="deploy">代码更新日志</option><option value="dependencies">依赖更新日志</option></select></label></div><div class="storage-actions"><button class="btn btn-outline-secondary btn-sm" onclick="loadStorageLogs()">刷新</button><button id="deleteStorageLogsButton" class="btn btn-outline-danger btn-sm" type="button" onclick="deleteSelectedStorageLogs()" disabled>删除选中</button><button class="btn btn-outline-secondary btn-sm" type="button" onclick="resetStorageFilters()">重置</button></div></div><div class="table-responsive"><table class="table align-middle project-table mb-0"><thead><tr><th><input id="storageSelectAll" type="checkbox" aria-label="全选日志" onchange="toggleAllStorageLogs(this.checked)"></th><th>项目</th><th>日志类型</th><th><button class="storage-sort-button" type="button" onclick="toggleStorageSizeSort()">大小 <span class="storage-sort-icon"><i class="bi bi-chevron-up" data-direction="asc"></i><i class="bi bi-chevron-down" data-direction="desc"></i></span></button></th><th>更新时间</th><th>文件名</th></tr></thead><tbody id="storageLogs"></tbody></table></div><div class="storage-pagination"><span id="storagePaginationInfo"></span><div id="storagePagination"></div></div></section>
-          </section>
+          {% include 'pages/overview.html' %}
+          {% include 'pages/projects.html' %}
+          {% include 'pages/operations.html' %}
+          {% include 'pages/tmux.html' %}
+          {% include 'pages/storage.html' %}
           {% include 'issue_management/page.html' %}
-          <section class="page-view" id="detail-page">
-            <section class="content-card detail-page-card"><div id="details"></div></section>
-          </section>
+          {% include 'pages/detail.html' %}
       </main>
     </div>
   </div>
@@ -126,6 +73,9 @@
   <script src="{{ url_for('issue_management.static', filename='condition-builder.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='dashboard.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='issues.js') }}"></script>
+  <script src="/static/memory-monitor.js"></script>
+  <script src="/static/project-forms.js"></script>
+  <script src="/static/home-issues.js"></script>
   <script src="/static/app.js?v=issues-v1"></script>
   </body>
 </html>

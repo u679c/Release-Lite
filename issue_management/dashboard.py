@@ -5,9 +5,21 @@ from datetime import date, timedelta
 
 
 DASHBOARD_SCOPES = {
-    "weekly", "weekly_pending", "submitted", "week_today", "week_soon",
-    "week_overdue", "week_scheduled", "pending", "overdue", "today", "soon",
-    "normal", "later", "bugs",
+    "weekly",
+    "weekly_pending",
+    "submitted",
+    "week_today",
+    "week_soon",
+    "week_overdue",
+    "week_scheduled",
+    "pending",
+    "overdue",
+    "today",
+    "soon",
+    "normal",
+    "later",
+    "bugs",
+    "bugs_pending",
 }
 
 
@@ -53,9 +65,17 @@ def is_watched_bug(row, terminal_bug_statuses):
     return bool(status) and (status == "已修复" or status not in terminal_bug_statuses)
 
 
-def matches_dashboard(row, scope, test_date, today, pre_test_statuses, submitted_statuses, terminal_bug_statuses):
+def needs_bug_attention(row, terminal_statuses):
+    return row.get("status") != "已修复待发布" and row.get("status") not in terminal_statuses
+
+
+def matches_dashboard(
+    row, scope, test_date, today, pre_test_statuses, submitted_statuses, terminal_bug_statuses
+):
     if scope == "bugs":
         return row["kind"] == "bugs" and is_watched_bug(row, terminal_bug_statuses)
+    if scope == "bugs_pending":
+        return row["kind"] == "bugs" and needs_bug_attention(row, terminal_bug_statuses)
     if row["kind"] != "requirements":
         return not scope and not test_date
     deadline = calendar_date(row.get("test_deadline"))
@@ -80,38 +100,75 @@ def matches_dashboard(row, scope, test_date, today, pre_test_statuses, submitted
     return deadline == today if scope == "today" else deadline_bucket(deadline, today) == scope
 
 
-def summarize(requirements, bugs, today, pre_test_statuses, submitted_statuses, terminal_bug_statuses):
+def summarize(
+    requirements, bugs, today, pre_test_statuses, submitted_statuses, terminal_bug_statuses
+):
     start, end = week_bounds(today)
     pending = [row for row in requirements if is_pending_requirement(row, pre_test_statuses)]
     dated = [(row, calendar_date(row.get("test_deadline"))) for row in pending]
     dated = [(row, deadline) for row, deadline in dated if deadline is not None]
-    weekly = [(row, state) for row in requirements if (state := weekly_status(row, today, pre_test_statuses, submitted_statuses))]
+    weekly = [
+        (row, state)
+        for row in requirements
+        if (state := weekly_status(row, today, pre_test_statuses, submitted_statuses))
+    ]
     week_status = Counter(state for _, state in weekly)
     buckets = Counter(deadline_bucket(deadline, today) for _, deadline in dated)
 
     calendar = []
     for offset in range(7):
         day = start + timedelta(days=offset)
-        rows = [row for row, _ in weekly if calendar_date(row.get("test_deadline")) == day]
-        has_pending = any(is_pending_requirement(row, pre_test_statuses) for row in rows)
-        tone = "today" if day == today else "overdue" if has_pending and day < today else "soon" if has_pending and 0 < (day - today).days <= 3 else "normal"
-        calendar.append({"date": day.isoformat(), "count": len(rows), "tone": tone, "today": day == today})
+        counts = Counter(
+            "normal" if state == "scheduled" else state
+            for row, state in weekly
+            if calendar_date(row.get("test_deadline")) == day
+        )
+        calendar.append(
+            {
+                "date": day.isoformat(),
+                "count": sum(counts.values()),
+                "counts": dict(counts),
+                "today": day == today,
+            }
+        )
 
-    bug_status = Counter(row["status"] for row in bugs if is_watched_bug(row, terminal_bug_statuses))
+    bug_status = Counter(
+        row["status"] for row in bugs if is_watched_bug(row, terminal_bug_statuses)
+    )
     project_counts = {}
     for row, deadline in dated:
         for project in set(row.get("project") or [""]):
             project_counts.setdefault(project, Counter())[deadline_bucket(deadline, today)] += 1
-    projects = [{"name": name, "total": sum(counts.values()), "buckets": dict(counts)} for name, counts in project_counts.items()]
-    projects.sort(key=lambda item: (-item["buckets"].get("overdue", 0), -item["buckets"].get("soon", 0), -item["total"], item["name"]))
+    projects = [
+        {"name": name, "total": sum(counts.values()), "buckets": dict(counts)}
+        for name, counts in project_counts.items()
+    ]
+    projects.sort(
+        key=lambda item: (
+            -item["buckets"].get("overdue", 0),
+            -item["buckets"].get("soon", 0),
+            -item["total"],
+            item["name"],
+        )
+    )
     return {
-        "week_start": start.isoformat(), "week_end": end.isoformat(),
+        "week_start": start.isoformat(),
+        "week_end": end.isoformat(),
         "metrics": {
-            "weekly": len(weekly) - week_status["submitted"], "weekly_total": len(weekly),
-            "weekly_overdue": week_status["overdue"], "soon": buckets["soon"],
-            "today": sum(deadline == today for _, deadline in dated), "overdue": buckets["overdue"],
+            "weekly": len(weekly) - week_status["submitted"],
+            "weekly_total": len(weekly),
+            "weekly_overdue": week_status["overdue"],
+            "soon": buckets["soon"],
+            "today": sum(deadline == today for _, deadline in dated),
+            "overdue": buckets["overdue"],
         },
-        "calendar": calendar, "deadline_buckets": dict(buckets), "dated_pending": len(dated),
-        "undated_pending": len(pending) - len(dated), "week_status": dict(week_status), "week_total": len(weekly),
-        "bug_status": dict(bug_status), "bug_total": sum(bug_status.values()), "projects": projects[:5],
+        "calendar": calendar,
+        "deadline_buckets": dict(buckets),
+        "dated_pending": len(dated),
+        "undated_pending": len(pending) - len(dated),
+        "week_status": dict(week_status),
+        "week_total": len(weekly),
+        "bug_status": dict(bug_status),
+        "bug_total": sum(bug_status.values()),
+        "projects": projects[:5],
     }

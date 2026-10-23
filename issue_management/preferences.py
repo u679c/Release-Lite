@@ -8,13 +8,29 @@ from .conditions import normalize_conditions
 from .storage import write_json
 
 
-FILTER_KEYS = ("q", "project", "version", "person", "status", "priority", "environment", "hierarchy", "scope", "include_family", "version_desc", "sort_by", "sort_order")
+FILTER_KEYS = (
+    "q",
+    "project",
+    "version",
+    "person",
+    "status",
+    "priority",
+    "environment",
+    "hierarchy",
+    "scope",
+    "include_family",
+    "version_desc",
+    "sort_by",
+    "sort_order",
+)
 AUTO_SYNC_CHILDREN = ("requirements", "bugs")
 
 
 def requirement_sort(filters):
     sort_by = filters.get("sort_by") or "version"
-    sort_order = filters.get("sort_order") or ("desc" if filters.get("version_desc") == "1" else "asc")
+    sort_order = filters.get("sort_order") or (
+        "desc" if filters.get("version_desc") == "1" else "asc"
+    )
     if sort_by not in ("version", "priority"):
         raise ValueError("需求排序字段不正确")
     if sort_order not in ("asc", "desc"):
@@ -35,7 +51,11 @@ def normalize_preferences(payload):
             raise ValueError("父记录和兄弟元素开关格式不正确")
         if key == "version_desc" and value not in ("", "0", "1"):
             raise ValueError("按版本倒序开关格式不正确")
-        if key == "project" and isinstance(value, list) and all(isinstance(item, str) for item in value):
+        if (
+            key == "project"
+            and isinstance(value, list)
+            and all(isinstance(item, str) for item in value)
+        ):
             filters[key] = list(dict.fromkeys(item for item in value if item))
         elif isinstance(value, str):
             filters[key] = value
@@ -56,24 +76,44 @@ def normalize_preferences(payload):
         rules = []
         for key in FILTER_KEYS:
             value = filters.get(key)
-            if key in ("q", "include_family", "version_desc", "sort_by", "sort_order") or (key == "project" and projects) or not value:
+            if (
+                key in ("q", "include_family", "version_desc", "sort_by", "sort_order")
+                or (key == "project" and projects)
+                or not value
+            ):
                 continue
-            rules.append({"field": key, "operator": "includes", "values": value if isinstance(value, list) else [value]})
+            rules.append(
+                {
+                    "field": key,
+                    "operator": "includes",
+                    "values": value if isinstance(value, list) else [value],
+                }
+            )
         condition_filter = {"logic": "and", "rules": rules}
-    return {"filters": filters, "condition_filter": normalize_conditions(condition_filter), "requirement_projects": projects, "active_project": active if active in projects else "", "auto_sync": auto_sync}
+    return {
+        "filters": filters,
+        "condition_filter": normalize_conditions(condition_filter),
+        "requirement_projects": projects,
+        "active_project": active if active in projects else "",
+        "auto_sync": auto_sync,
+    }
 
 
 def auto_sync_settings(saved):
-    children = {kind: normalize_preferences(saved.get(kind, {}))["auto_sync"] for kind in AUTO_SYNC_CHILDREN}
+    children = {
+        kind: normalize_preferences(saved.get(kind, {}))["auto_sync"] for kind in AUTO_SYNC_CHILDREN
+    }
     return {**children, "overview": all(children.values())}
 
 
 def preference_response(saved, kind):
     settings = auto_sync_settings(saved)
     return {
-        **normalize_preferences(saved.get(kind, {})), "auto_sync": settings[kind],
+        **normalize_preferences(saved.get(kind, {})),
+        "auto_sync": settings[kind],
         "auto_sync_states": settings,
-        "auto_sync_indeterminate": kind == "overview" and settings["requirements"] != settings["bugs"],
+        "auto_sync_indeterminate": kind == "overview"
+        and settings["requirements"] != settings["bugs"],
     }
 
 
@@ -82,7 +122,11 @@ class PreferenceStore:
         self.directory = Path(directory)
 
     def access(self, kind, payload=None, *, patch=False):
-        if patch and (not isinstance(payload, dict) or set(payload) != {"auto_sync"} or not isinstance(payload["auto_sync"], bool)):
+        if patch and (
+            not isinstance(payload, dict)
+            or set(payload) != {"auto_sync"}
+            or not isinstance(payload["auto_sync"], bool)
+        ):
             raise ValueError("自动同步配置格式不正确")
         normalized = normalize_preferences(payload) if payload is not None and not patch else None
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -108,9 +152,15 @@ class PreferenceStore:
                 saved[kind] = normalized
                 if kind == "overview" and "auto_sync" in payload:
                     for child in AUTO_SYNC_CHILDREN:
-                        saved[child] = {**normalize_preferences(saved.get(child, {})), "auto_sync": payload["auto_sync"]}
+                        saved[child] = {
+                            **normalize_preferences(saved.get(child, {})),
+                            "auto_sync": payload["auto_sync"],
+                        }
                 # The parent is always derived from both children; commit the linkage atomically.
-                saved["overview"] = {**normalize_preferences(saved.get("overview", {})), "auto_sync": auto_sync_settings(saved)["overview"]}
+                saved["overview"] = {
+                    **normalize_preferences(saved.get("overview", {})),
+                    "auto_sync": auto_sync_settings(saved)["overview"],
+                }
                 write_json(path, saved, indent=2)
                 return preference_response(saved, kind)
             finally:

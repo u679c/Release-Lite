@@ -3,11 +3,22 @@
 import json
 
 
-CONDITION_FIELDS = {"project", "version", "person", "status", "priority", "environment", "hierarchy", "scope"}
+CONDITION_FIELDS = {
+    "project",
+    "version",
+    "person",
+    "status",
+    "priority",
+    "environment",
+    "hierarchy",
+    "scope",
+}
 
 
 def is_high_priority(row):
-    return row.get("priority") in ({"P0", "P1"} if row["kind"] == "requirements" else {"紧急", "高"})
+    return row.get("priority") in (
+        {"P0", "P1"} if row["kind"] == "requirements" else {"紧急", "高"}
+    )
 
 
 def normalize_conditions(payload):
@@ -25,12 +36,23 @@ def normalize_conditions(payload):
         raise ValueError("筛选条件最多支持 50 条")
     normalized = []
     for rule in rules:
-        if not isinstance(rule, dict) or not isinstance(rule.get("field"), str) or rule["field"] not in CONDITION_FIELDS or rule.get("operator") not in ("includes", "excludes"):
+        if (
+            not isinstance(rule, dict)
+            or not isinstance(rule.get("field"), str)
+            or rule["field"] not in CONDITION_FIELDS
+            or rule.get("operator") not in ("includes", "excludes")
+        ):
             raise ValueError("筛选字段或操作符不正确")
         values = rule.get("values", [])
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
             raise ValueError("筛选值应为数组")
-        normalized.append({"field": rule["field"], "operator": rule["operator"], "values": list(dict.fromkeys(value for value in values if value))})
+        normalized.append(
+            {
+                "field": rule["field"],
+                "operator": rule["operator"],
+                "values": list(dict.fromkeys(value for value in values if value)),
+            }
+        )
     return {"logic": payload.get("logic", "and"), "rules": normalized}
 
 
@@ -41,12 +63,27 @@ def matches_conditions(row, conditions):
             continue
         field = rule["field"]
         if field == "person":
-            values = [person["id"] for person in row.get("developers" if row["kind"] == "requirements" else "owners") or []]
+            values = [
+                person["id"]
+                for person in row.get("developers" if row["kind"] == "requirements" else "owners")
+                or []
+            ]
         elif field == "hierarchy":
-            values = ["child" if row["is_child"] else "main"] if row["kind"] == "requirements" else []
+            values = (
+                ["child" if row["is_child"] else "main"] if row["kind"] == "requirements" else []
+            )
         elif field == "scope":
             urgent = row["pending"] and is_high_priority(row)
-            values = [name for name, matched in {"pending": row["pending"], "urgent": urgent, "overdue": row["overdue"], "urgent_overdue": urgent and row["overdue"]}.items() if matched]
+            values = [
+                name
+                for name, matched in {
+                    "pending": row["pending"],
+                    "urgent": urgent,
+                    "overdue": row["overdue"],
+                    "urgent_overdue": urgent and row["overdue"],
+                }.items()
+                if matched
+            ]
         else:
             value = row.get(field)
             values = value if isinstance(value, list) else [value] if value else []

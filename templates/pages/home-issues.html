@@ -1,0 +1,28 @@
+<section class="content-card home-issues-card" id="homeIssuesCard" aria-labelledby="homeIssuesTitle">
+  <div class="section-heading">
+    <div>
+      <h2 id="homeIssuesTitle">需求与Bug</h2>
+    </div>
+    <a class="btn btn-outline-primary btn-sm" href="#/issues">查看总览</a>
+  </div>
+  <p id="homeIssuesStatus" class="home-issues-status" role="status" aria-live="polite">正在读取关注事项…</p>
+  <div id="homeIssuesMetrics" class="home-issues-metrics"></div>
+  <div class="home-issues-queues">
+    <section aria-labelledby="homeRequirementsTitle">
+      <div class="home-issues-queue-heading">
+        <h3 id="homeRequirementsTitle"><i class="bi bi-card-checklist" aria-hidden="true"></i> 待提测需求</h3><a
+          id="homeRequirementsLink" href="#/requirements">全部需求 <i class="bi bi-chevron-right"
+            aria-hidden="true"></i></a>
+      </div>
+      <div id="homeRequirementsQueue"></div>
+    </section>
+    <section aria-labelledby="homeBugsTitle">
+      <div class="home-issues-queue-heading">
+        <h3 id="homeBugsTitle"><i class="bi bi-bug" aria-hidden="true"></i> 待处理 Bug</h3><a id="homeBugsLink"
+          href="#/bugs">查看待处理 <i class="bi bi-chevron-right" aria-hidden="true"></i></a>
+      </div>
+      <div id="homeBugsQueue"></div>
+    </section>
+  </div>
+  <p id="homeIssuesNote" class="home-issues-note">加载中...</p>
+</section>

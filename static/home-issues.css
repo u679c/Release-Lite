@@ -1,0 +1,215 @@
+.home-issues-card .section-heading {
+  align-items: center;
+  gap: 16px;
+}
+.home-issues-status {
+  margin: 14px 0 0;
+  color: #667085;
+  font-size: 12px;
+}
+.home-issues-status.has-error {
+  color: #b54708;
+}
+.home-issues-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 22px 0;
+}
+.home-issues-metric {
+  --attention-color: #246bfe;
+  --attention-bg: #edf4ff;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #e9edf4;
+  border-radius: 9px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.home-issues-metric[data-tone="red"] {
+  --attention-color: #e5484d;
+  --attention-bg: #fff0f0;
+}
+.home-issues-metric[data-tone="amber"] {
+  --attention-color: #ce8a13;
+  --attention-bg: #fff7e5;
+}
+.home-issues-metric[data-tone="purple"] {
+  --attention-color: #8655df;
+  --attention-bg: #f4efff;
+}
+.home-issues-metric:hover {
+  border-color: var(--attention-color);
+  color: var(--ink);
+  background: #fcfdff;
+}
+.home-issues-metric-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--attention-color);
+  background: var(--attention-bg);
+  font-size: 19px;
+}
+.home-issues-metric-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+.home-issues-metric b {
+  display: block;
+  margin-top: 4px;
+  font-size: 25px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.home-issues-arrow {
+  margin-left: auto;
+  color: #a0aec0;
+  font-size: 14px;
+}
+.home-issues-queues {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+.home-issues-queue-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+  gap: 12px;
+}
+.home-issues-queue-heading h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+.home-issues-queue-heading h3 i {
+  margin-right: 5px;
+  color: #7688a4;
+}
+.home-issues-queue-heading a {
+  font-size: 11px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.home-issues-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #f0f2f6;
+  color: var(--ink);
+  text-decoration: none;
+}
+.home-issues-row:last-child {
+  border-bottom: 0;
+}
+.home-issues-row:hover .home-issues-row-title {
+  color: var(--blue);
+}
+.home-issues-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.home-issues-row-title {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.home-issues-row small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-top: 5px;
+  color: #8a96a9;
+  font-size: 11px;
+}
+.home-issues-row-tags {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+.home-issue-priority {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 10px;
+  font-weight: 650;
+}
+.home-issue-priority[data-priority="P0"], .home-issue-priority[data-priority="紧急"] {
+  background: #fee4e2;
+  color: #b42318;
+}
+.home-issue-priority[data-priority="P1"], .home-issue-priority[data-priority="高"] {
+  background: #ffedce;
+  color: #b54708;
+}
+.home-issue-priority[data-priority="P2"], .home-issue-priority[data-priority="中"] {
+  background: #e5efff;
+  color: #175cd3;
+}
+.home-issue-priority[data-priority="P3"], .home-issue-priority[data-priority="低"] {
+  background: #dcfae6;
+  color: #027a48;
+}
+.home-issues-state {
+  color: #8793a6;
+  font-size: 10px;
+}
+.home-issues-empty {
+  margin: 0;
+  padding: 28px 10px;
+  text-align: center;
+  color: #98a2b3;
+  font-size: 12px;
+}
+.home-issues-note {
+  margin: 14px 0 0;
+  color: #98a2b3;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.home-issues-card a:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+@media (max-width: 1100px) {
+  .home-issues-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 640px) {
+  .home-issues-queues {
+    grid-template-columns: 1fr;
+    gap: 18px;
+  }
+  .home-issues-metric {
+    padding: 12px;
+    gap: 8px;
+  }
+  .home-issues-metric-icon {
+    width: 30px;
+    height: 30px;
+    font-size: 16px;
+  }
+  .home-issues-arrow {
+    display: none;
+  }
+  .home-issues-metric-label {
+    font-size: 11px;
+  }
+}

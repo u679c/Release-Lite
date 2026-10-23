@@ -1,0 +1,20 @@
+<section class="page-view" id="projects-page">
+  <div class="section-heading page-heading project-page-heading"><div class="project-filters" role="search"><input id="projectNameFilter" class="form-control" type="search" placeholder="搜索项目名称" aria-label="搜索项目名称" oninput="filterProjects()"><select id="projectRuntimeFilter" class="form-select" aria-label="按项目类型筛选" onchange="filterProjects()"><option value="">全部类型</option><option value="python">Python</option><option value="node">Node.js</option><option value="generic">通用</option></select></div><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
+  <section class="content-card project-table-card">
+    <div class="table-responsive">
+      <table class="table align-middle project-table mb-0">
+        <thead>
+          <tr>
+            <th>项目</th>
+            <th>分支</th>
+            <th>状态</th>
+            <th>运行资源</th>
+            <th>端口</th>
+            <th class="text-end">操作</th>
+          </tr>
+        </thead>
+        <tbody id="projects"></tbody>
+      </table>
+    </div>
+  </section>
+</section>
