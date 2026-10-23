@@ -32,9 +32,9 @@ def requirement_sort(filters):
         "desc" if filters.get("version_desc") == "1" else "asc"
     )
     if sort_by not in ("version", "priority"):
-        raise ValueError("需求排序字段不正确")
+        raise ValueError("需求排序方式无效")
     if sort_order not in ("asc", "desc"):
-        raise ValueError("需求排序方向不正确")
+        raise ValueError("需求排列顺序无效")
     return sort_by, sort_order
 
 
@@ -43,14 +43,14 @@ def normalize_preferences(payload):
         raise ValueError("筛选配置格式不正确")
     auto_sync = payload.get("auto_sync", False)
     if not isinstance(auto_sync, bool):
-        raise ValueError("自动同步配置必须为布尔值")
+        raise ValueError("自动同步设置无效")
     filters = {}
     for key in FILTER_KEYS:
         value = payload.get("filters", {}).get(key, "")
         if key == "include_family" and value not in ("", "0", "1"):
-            raise ValueError("父记录和兄弟元素开关格式不正确")
+            raise ValueError("需求层级显示设置无效")
         if key == "version_desc" and value not in ("", "0", "1"):
-            raise ValueError("按版本倒序开关格式不正确")
+            raise ValueError("版本排序设置无效")
         if (
             key == "project"
             and isinstance(value, list)
@@ -65,11 +65,11 @@ def normalize_preferences(payload):
     filters.pop("version_desc", None)
     projects = payload.get("requirement_projects", [])
     if not isinstance(projects, list) or not all(isinstance(item, str) for item in projects):
-        raise ValueError("项目多选配置格式不正确")
+        raise ValueError("项目选择无效")
     projects = list(dict.fromkeys(item for item in projects if item))
     active = payload.get("active_project", "")
     if not isinstance(active, str):
-        raise ValueError("项目 tab 配置格式不正确")
+        raise ValueError("项目显示设置无效")
     condition_filter = payload.get("condition_filter")
     if condition_filter is None:
         # Migrate previously saved single-value filters without losing user choices.
@@ -127,7 +127,7 @@ class PreferenceStore:
             or set(payload) != {"auto_sync"}
             or not isinstance(payload["auto_sync"], bool)
         ):
-            raise ValueError("自动同步配置格式不正确")
+            raise ValueError("自动同步设置无效")
         normalized = normalize_preferences(payload) if payload is not None and not patch else None
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self.directory / "preferences.json"
@@ -139,7 +139,7 @@ class PreferenceStore:
                 except FileNotFoundError:
                     saved = {}
                 if not isinstance(saved, dict):
-                    raise ValueError("服务器筛选配置格式不正确")
+                    raise ValueError("已保存的筛选设置无效")
                 current = normalize_preferences(saved.get(kind, {}))
                 current["auto_sync"] = auto_sync_settings(saved)[kind]
                 if payload is None:

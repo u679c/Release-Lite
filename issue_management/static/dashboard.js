@@ -17,16 +17,16 @@ window.IssueDashboard = (() => {
   ];
   const weekLabels = [
     ["submitted", "已提测"],
-    ["today", "今天提测"],
-    ["soon", "临近截止 (≤3天)"],
+    ["today", "今日提测"],
+    ["soon", "临近截止（≤3天）"],
     ["overdue", "已逾期"],
     ["scheduled", "未到截止"],
   ];
   const calendarLabels = [
     ["submitted", "已提测"],
     ["normal", "正常"],
-    ["today", "今天提测"],
-    ["soon", "临近截止 (≤3天)"],
+    ["today", "今日提测"],
+    ["soon", "临近截止（≤3天）"],
     ["overdue", "已逾期"],
   ];
   function dot(color) {
@@ -135,7 +135,7 @@ window.IssueDashboard = (() => {
       `<span class="issue-dashboard-metric-content">` +
       `<span class="issue-dashboard-metric-title">${title}</span>` +
       `<b class="issue-dashboard-metric-value">${value}</b>` +
-      `<span class="issue-dashboard-metric-detail">${detail}</span></span>` +
+      `${detail ? `<span class="issue-dashboard-metric-detail">${detail}</span>` : ""}</span>` +
       `<i class="bi bi-${decoration} issue-dashboard-metric-decoration" aria-hidden="true"></i>` +
       `<i class="bi bi-arrow-right issue-dashboard-metric-arrow" aria-hidden="true"></i>` +
       `</button>`
@@ -169,23 +169,23 @@ window.IssueDashboard = (() => {
     const metrics = data.metrics;
     find("#issueDashboardMetrics").innerHTML = [
       metric(
-        "本周待提测的需求",
+        "本周待提测",
         metrics.weekly,
-        `共 ${metrics.weekly_total} 个需求，<strong>${metrics.weekly_overdue} 个已逾期</strong>`,
+        `本周共 ${metrics.weekly_total} 个需求 · <strong>${metrics.weekly_overdue} 个逾期</strong>`,
         "red",
         "calendar3",
         "bar-chart-fill",
         "weekly_pending",
       ),
-      metric("未提测且即将超时", metrics.soon, "3 天内到提测截止", "yellow", "clock-fill", "clock-fill", "soon"),
-      metric("今天是提测日期", metrics.today, "今天需要提测的需求", "blue", "calendar3", "calendar3", "today"),
-      metric("已逾期未提测", metrics.overdue, metrics.overdue ? "请尽快处理" : "当前没有逾期需求", "purple", "file-earmark-text-fill", "exclamation-circle-fill", "overdue"),
+      metric("3 天内待提测", metrics.soon, "", "yellow", "clock-fill", "clock-fill", "soon"),
+      metric("今日待提测", metrics.today, "", "blue", "calendar3", "calendar3", "today"),
+      metric("逾期未提测", metrics.overdue, "", "purple", "file-earmark-text-fill", "exclamation-circle-fill", "overdue"),
     ].join("");
     find("#issueDashboardWeekRange").textContent = `${data.week_start} ~ ${data.week_end}`;
     const maximum = Math.max(1, ...data.calendar.map((day) => day.count));
     find("#issueDashboardCalendar").innerHTML = data.calendar.map((day, index) => calendarDay(day, index, maximum)).join("");
     find("#issueDashboardDeadlines").innerHTML = donut(entries(data.deadline_buckets, deadlineLabels), data.dated_pending, "未提测需求");
-    find("#issueWeekStatusTitle").textContent = `本周提测需求状态（${data.week_total}）`;
+    find("#issueWeekStatusTitle").textContent = `本周提测状态（${data.week_total}）`;
     find("#issueDashboardWeekStatus").innerHTML = donut(entries(data.week_status, weekLabels, true), data.week_total, "本周需求");
     const bugLabels = {
       "新建": "#ff595f",
@@ -208,15 +208,16 @@ window.IssueDashboard = (() => {
       color: bugLabels[name] || extraColors[index % extraColors.length],
       status: name,
     }));
-    find("#issueBugStatusTitle").textContent = `正在关注的 Bug（${data.bug_total}）`;
-    find("#issueDashboardBugStatus").innerHTML = donut(bugEntries, data.bug_total, "正在关注");
+    find("#issueBugStatusTitle").textContent = `关注 Bug（${data.bug_total}）`;
+    find("#issueDashboardBugStatus").innerHTML = donut(bugEntries, data.bug_total, "关注 Bug");
     bindDonutHover(root);
     const projectMaximum = Math.max(1, ...data.projects.map((project) => project.total));
     find("#issueDashboardProjects").innerHTML = data.projects.length
       ? data.projects.map((project) => projectRiskRow(project, projectMaximum)).join("")
       : '<p class="issue-dashboard-empty">暂无待提测的项目</p>';
-    find("#issueDashboardNote").textContent =
-      `统计沿用当前创建时间范围及筛选条件，按计算，主需求与子需求分别计数。本周按提测截止日期归属；未提测取空状态、产品设计中、需求待评审、待开发、开发中、开发完成。${data.undated_pending} 个未填有效提测日期的待提测需求未计入日期图表；Bug 未填写状态的记录不计入。项目风险按逾期数、临近截止数排序，多项目需求分别计入各项目。`;
+    const note = find("#issueDashboardNote");
+    note.textContent = data.undated_pending ? `${data.undated_pending} 个待提测需求未设置有效提测日期` : "";
+    note.hidden = !data.undated_pending;
   }
   return {
     render,

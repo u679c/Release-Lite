@@ -1,16 +1,29 @@
 <section class="page-view issue-module" id="issues-page">
   <div class="section-heading page-heading issue-heading">
-    <div class="issue-heading-search"><label role="search"><input class="form-control form-control-sm" name="q" form="issueFilters"
-          type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID"></label><button
-        class="btn btn-primary btn-sm" id="issueSubmitRequirements" type="button" hidden disabled>提测</button></div>
-    <div class="issue-heading-actions"><a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank"
-        rel="noopener noreferrer" hidden>在飞书打开 <i class="bi bi-box-arrow-up-right"></i></a><button
-        class="btn btn-outline-secondary btn-sm" id="issueFilterButton" type="button" aria-haspopup="dialog"
-        aria-controls="issueFilterDialog"><i class="bi bi-funnel"></i> 筛选</button>
-      <div class="issue-sync-controls"><button class="btn btn-primary btn-sm" id="issueSyncButton" type="button"><i
-            class="bi bi-arrow-clockwise"></i> 同步数据</button><label class="issue-auto-sync"
-          title="勾选后，当前页面每 1 分钟自动同步一次"><input id="issueAutoSync" type="checkbox"
-            aria-label="当前页面每 1 分钟自动同步"><span>Auto</span></label></div>
+    <div class="issue-heading-search">
+      <label role="search">
+        <input class="form-control form-control-sm" name="q" form="issueFilters" type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID" />
+      </label>
+      <button class="btn btn-primary btn-sm" id="issueSubmitRequirements" type="button" hidden disabled>提测</button>
+    </div>
+    <div class="issue-heading-actions">
+      <a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener noreferrer" hidden>
+        在飞书打开
+        <i class="bi bi-box-arrow-up-right"></i>
+      </a>
+      <button class="btn btn-outline-secondary btn-sm" id="issueFilterButton" type="button" aria-haspopup="dialog" aria-controls="issueFilterDialog">
+        <i class="bi bi-funnel"></i> 筛选
+      </button>
+      <div class="issue-sync-controls">
+        <button class="btn btn-primary btn-sm" id="issueSyncButton" type="button">
+          <i class="bi bi-arrow-clockwise"></i>
+          同步数据
+        </button>
+        <label class="issue-auto-sync" title="每分钟自动同步">
+          <input id="issueAutoSync" type="checkbox" aria-label="每分钟自动同步" />
+          <span style="white-space: nowrap;">自动同步</span>
+        </label>
+      </div>
     </div>
   </div>
   <div id="issueSyncStatus" class="issue-sync-status" role="status" aria-live="polite"></div>
@@ -19,63 +32,79 @@
   <div id="issueProjectTabs" class="issue-project-tabs" role="tablist" aria-label="按项目查看需求" hidden></div>
   <dialog id="issueFilterDialog" class="issue-detail-dialog issue-filter-dialog" aria-labelledby="issueFilterTitle">
     <header>
-      <h2 id="issueFilterTitle">设置筛选条件</h2><button type="button" aria-label="关闭筛选" id="issueCloseFilter">×</button>
+      <h2 id="issueFilterTitle">筛选</h2>
+      <button type="button" aria-label="关闭筛选" id="issueCloseFilter">×</button>
     </header>
-    <p class="muted">修改条件后自动更新列表与统计。</p>
-    <form id="issueFilters" class="issue-filters" role="search" onsubmit="return false">
-      <label>创建时间（起）<input class="form-control" name="created_from" type="date" aria-label="创建开始日期" required></label>
-      <label>创建时间（止）<input class="form-control" name="created_to" type="date" aria-label="创建结束日期" required></label>
-      <div id="issueProjectMultiFilter" class="issue-project-multi" hidden><span id="issueProjectLabel"
-          class="issue-project-label">项目 tab（多选）</span>
+    <form id="issueFilters" class="issue-filters" role="search" onsubmit="return false;">
+      <label>创建时间（起）<input class="form-control" name="created_from" type="date" aria-label="创建开始日期" required /></label>
+      <label>创建时间（止）<input class="form-control" name="created_to" type="date" aria-label="创建结束日期" required /></label>
+      <div id="issueProjectMultiFilter" class="issue-project-multi" hidden>
+        <span id="issueProjectLabel" class="issue-project-label">项目（多选）</span>
         <details id="issueProjectDropdown" class="issue-project-dropdown">
-          <summary aria-label="选择项目，可多选" aria-haspopup="listbox"><span id="issueProjectSelectedText">全部项目</span><i
-              class="bi bi-chevron-down" aria-hidden="true"></i></summary>
-          <div class="issue-dropdown-panel"><input id="issueProjectSearch"
-              class="form-control form-control-sm issue-option-search" type="search" placeholder="搜索项目"
-              aria-label="搜索项目选项" autocomplete="off">
-            <div id="issueProjectChoices" class="issue-project-choices" role="listbox" aria-multiselectable="true"
-              aria-labelledby="issueProjectLabel"></div>
+          <summary aria-label="选择项目，可多选" aria-haspopup="listbox">
+            <span id="issueProjectSelectedText">全部项目</span><i class="bi bi-chevron-down" aria-hidden="true"></i>
+          </summary>
+          <div class="issue-dropdown-panel">
+            <input
+              id="issueProjectSearch"
+              class="form-control form-control-sm issue-option-search"
+              type="search"
+              placeholder="搜索项目"
+              aria-label="搜索项目选项"
+              autocomplete="off"
+            />
+            <div id="issueProjectChoices" class="issue-project-choices" role="listbox" aria-multiselectable="true" aria-labelledby="issueProjectLabel"></div>
           </div>
         </details>
       </div>
       <div id="issueRequirementSort" class="issue-requirement-sort" hidden>
-        <label>排序字段<select class="form-select" name="sort_by" aria-label="需求排序字段"><option value="version">版本</option><option value="priority">优先级</option></select></label>
-        <label>排列顺序<select class="form-select" name="sort_order" aria-label="需求排列顺序"><option value="asc">正序</option><option value="desc">倒序</option></select></label>
+        <label
+          >排序方式<select class="form-select" name="sort_by" aria-label="需求排序方式">
+            <option value="version">版本</option>
+            <option value="priority">优先级</option>
+          </select></label
+        >
+        <label
+          >排列顺序<select class="form-select" name="sort_order" aria-label="需求排列顺序">
+            <option value="asc">正序</option>
+            <option value="desc">倒序</option>
+          </select></label
+        >
       </div>
       <section class="issue-condition-builder" aria-label="筛选条件组合">
-        <div class="issue-condition-heading"><span>符合以下</span><select class="form-select" name="condition_logic"
-            aria-label="条件组合方式">
+        <div class="issue-condition-heading">
+          <span>符合以下</span
+          ><select class="form-select" name="condition_logic" aria-label="条件组合方式">
             <option value="and">所有</option>
-            <option value="or">任一</option>
-          </select><span>条件</span><label id="issueFamilyFilter" class="form-check form-switch issue-family-switch"
-            hidden><input class="form-check-input" type="checkbox" role="switch" name="include_family" value="1"><span
-              class="form-check-label">是否同时展示父记录和兄弟元素</span></label></div>
+            <option value="or">任一</option></select
+          ><span>条件</span
+          ><label id="issueFamilyFilter" class="form-check form-switch issue-family-switch" hidden
+            ><input class="form-check-input" type="checkbox" role="switch" name="include_family" value="1" /><span class="form-check-label">显示完整需求层级</span></label
+          >
+        </div>
         <div id="issueConditionRows"></div>
-        <button id="issueAddCondition" class="issue-add-condition" type="button"><i class="bi bi-plus-lg"></i>
-          添加条件</button>
+        <button id="issueAddCondition" class="issue-add-condition" type="button"><i class="bi bi-plus-lg"></i> 添加条件</button>
       </section>
       <p id="issueFilterError" class="text-danger mb-0" role="alert" hidden></p>
       <footer class="issue-filter-footer">
-        <div><button class="btn btn-outline-secondary btn-sm" type="button" id="issueRecentDates">最近两个月</button><button
-            class="btn btn-outline-secondary btn-sm" type="button" id="issueReset">重置</button></div><button
-          class="btn btn-primary btn-sm" type="button" id="issueFilterDone">完成</button>
+        <div>
+          <button class="btn btn-outline-secondary btn-sm" type="button" id="issueRecentDates">最近两个月</button
+          ><button class="btn btn-outline-secondary btn-sm" type="button" id="issueReset">重置</button>
+        </div>
+        <button class="btn btn-primary btn-sm" type="button" id="issueFilterDone">完成</button>
       </footer>
     </form>
   </dialog>
   <div id="issueContent" hidden>
     {% include 'issue_management/dashboard.html' %}
     <section id="issueList" class="content-card issue-list-card">
-
       <div id="issueBugToolbar" class="issue-bug-toolbar" hidden>
-        <div id="issueBugStages" class="issue-bug-stages" role="group" aria-label="按处理阶段查看 bug" hidden></div>
-        <div id="issueBugBatchActions" class="issue-bug-batch-actions" role="group" aria-label="批量更新选中 bug 的状态" hidden>
+        <div id="issueBugStages" class="issue-bug-stages" role="group" aria-label="按处理阶段查看 Bug" hidden></div>
+        <div id="issueBugBatchActions" class="issue-bug-batch-actions" role="group" aria-label="批量更新选中 Bug 的状态" hidden>
           <span id="issueBugSelectionCount" class="muted"></span>
-          <button class="btn btn-primary btn-sm" type="button"
-            data-bug-batch-status="处理中">一键处理中</button>
-          <button class="btn btn-primary btn-sm" type="button"
-            data-bug-batch-status="已修复待发布">一键修复完成</button>
-          <button class="btn btn-primary btn-sm" type="button"
-            data-bug-batch-status="已修复">一键已发布</button>
+          <button class="btn btn-primary btn-sm" type="button" data-bug-batch-status="处理中">标记处理中</button>
+          <button class="btn btn-primary btn-sm" type="button" data-bug-batch-status="已修复待发布">标记待发布</button>
+          <button class="btn btn-primary btn-sm" type="button" data-bug-batch-status="已修复">标记已修复</button>
         </div>
       </div>
       <p id="issueBugBatchStatus" class="issue-bug-batch-status small" role="status" aria-live="polite" hidden></p>
@@ -90,34 +119,48 @@
               <tbody id="issueRows"></tbody>
             </table>
           </div>
-          <div class="issue-pagination"><span id="issuePageInfo" class="muted"></span>
-            <div><button class="btn btn-outline-secondary btn-sm" type="button" id="issuePrevious">上一页</button><button
-                class="btn btn-outline-secondary btn-sm" type="button" id="issueNext">下一页</button></div>
+          <div class="issue-pagination">
+            <span id="issuePageInfo" class="muted"></span>
+            <div>
+              <button class="btn btn-outline-secondary btn-sm" type="button" id="issuePrevious">上一页</button
+              ><button class="btn btn-outline-secondary btn-sm" type="button" id="issueNext">下一页</button>
+            </div>
           </div>
         </div>
-        <div id="issueWorkspaceResizer" class="issue-workspace-resizer" role="separator" tabindex="0"
-          aria-label="调整表格与操作台宽度" aria-orientation="vertical" aria-controls="issueBugQueue issueBugDesk"
-          aria-valuemin="25" aria-valuemax="75" aria-valuenow="51" title="拖动调整宽度，双击恢复默认；也可使用左右方向键" hidden></div>
-        <aside id="issueBugDesk" class="issue-bug-desk" aria-label="bug 操作台" hidden>
+        <div
+          id="issueWorkspaceResizer"
+          class="issue-workspace-resizer"
+          role="separator"
+          tabindex="0"
+          aria-label="调整表格与操作台宽度"
+          aria-orientation="vertical"
+          aria-controls="issueBugQueue issueBugDesk"
+          aria-valuemin="25"
+          aria-valuemax="75"
+          aria-valuenow="51"
+          title="拖动或按左右键调整，双击重置"
+          hidden
+        ></div>
+        <aside id="issueBugDesk" class="issue-bug-desk" aria-label="Bug 操作台" hidden>
           <header class="issue-desk-heading">
             <div>
               <h3>Bug 操作台</h3>
             </div>
             <div class="issue-desk-heading-actions">
-              <div id="issueBugDiscussion" class="issue-bug-discussion"></div><button class="btn btn-primary btn-sm"
-                type="button" data-bug-status="处理中" data-bug-status-label="处理" disabled>处理</button><span
-                id="issueBugPosition" class="muted"></span>
+              <div id="issueBugDiscussion" class="issue-bug-discussion"></div>
+              <button class="btn btn-primary btn-sm" type="button" data-bug-status="处理中" data-bug-status-label="处理" disabled>处理</button
+              ><span id="issueBugPosition" class="muted"></span>
             </div>
           </header>
-          <p id="issueBugDiscussionStatus" class="issue-discussion-status small" role="status" aria-live="polite"
-            hidden></p>
+          <p id="issueBugDiscussionStatus" class="issue-discussion-status small" role="status" aria-live="polite" hidden></p>
           <div id="issueBugDetail" class="issue-bug-detail"></div>
           <footer class="issue-bug-actions">
             <p id="issueBugActionStatus" class="small" role="status" aria-live="polite"></p>
-            <div><button id="issueBugSkip" class="btn btn-outline-secondary btn-sm" type="button">下一条 <i
-                  class="bi bi-arrow-right"></i></button><button class="btn btn-primary btn-sm" type="button"
-                data-bug-status="已修复待发布">已修复待发布</button><button class="btn btn-primary btn-sm" type="button"
-                data-bug-status="已修复">已修复</button></div>
+            <div>
+              <button id="issueBugSkip" class="btn btn-outline-secondary btn-sm" type="button">下一条 <i class="bi bi-arrow-right"></i></button
+              ><button class="btn btn-primary btn-sm" type="button" data-bug-status="已修复待发布">已修复待发布</button
+              ><button class="btn btn-primary btn-sm" type="button" data-bug-status="已修复">已修复</button>
+            </div>
           </footer>
         </aside>
       </div>
@@ -125,7 +168,8 @@
   </div>
   <dialog id="issueDetailDialog" class="issue-detail-dialog">
     <header>
-      <h2>记录详情</h2><button type="button" aria-label="关闭详情" id="issueCloseDetail">×</button>
+      <h2>记录详情</h2>
+      <button type="button" aria-label="关闭详情" id="issueCloseDetail">×</button>
     </header>
     <div id="issueDetailContent"></div>
   </dialog>

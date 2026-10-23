@@ -175,7 +175,7 @@ async function refresh() {
               `<small>内存 ${bytes(p.process.memory)}</small></span>${status(p)}</button>`,
           )
           .join("")
-      : '<span class="muted">还没有项目，前往项目管理页新建一个项目。</span>';
+      : '<span class="muted">暂无项目，请前往项目管理新建</span>';
     renderProjects();
     if ($("#operations-page").classList.contains("active")) await loadOperations();
   } catch (e) {
@@ -240,7 +240,7 @@ function renderProjects() {
   });
   target.innerHTML = projects.length
     ? projects.map(card).join("")
-    : `<tr><td colspan="6" class="empty-row">${projectList.length ? "没有符合筛选条件的项目" : "还没有项目，点击右上角“新建项目”开始管理。"}</td></tr>`;
+    : `<tr><td colspan="6" class="empty-row">${projectList.length ? "无匹配项目" : "暂无项目，点击“新建项目”添加"}</td></tr>`;
 }
 function filterProjects() {
   renderProjects();
@@ -281,13 +281,13 @@ async function loadTmuxSessions() {
               `</div></article>`,
           )
           .join("")
-      : '<section class="content-card tmux-empty"><i class="bi bi-terminal"></i><p>暂无项目终端会话</p><small>在项目详情的「终端」Tab 打开一个终端后，会话会显示在这里。</small></section>';
+      : '<section class="content-card tmux-empty"><i class="bi bi-terminal"></i><p>暂无项目终端会话</p></section>';
   } catch (e) {
     target.innerHTML = `<section class="content-card tmux-empty text-danger">${esc(e.message)}</section>`;
   }
 }
 async function closeTmuxSession(name) {
-  if (!confirm(`确认关闭终端会话「${name}」吗？会话中的运行命令也会停止。`)) return;
+  if (!confirm(`关闭会话「${name}」？运行中的命令也会停止。`)) return;
   try {
     await api(`/api/tmux/sessions/${encodeURIComponent(name)}`, {
       method: "DELETE",
@@ -370,7 +370,7 @@ async function loadStorageLogs() {
               `</tr>`,
           )
           .join("")
-      : '<tr><td colspan="6" class="empty-row">没有符合筛选条件的日志文件</td></tr>';
+      : '<tr><td colspan="6" class="empty-row">无匹配日志</td></tr>';
     const selectAll = $("#storageSelectAll");
     if (selectAll) selectAll.checked = false;
     document.querySelectorAll(".storage-sort-icon i").forEach((icon) => icon.classList.toggle("active", icon.dataset.direction === (storageSort === "size_asc" ? "asc" : "desc")));
@@ -503,9 +503,9 @@ function openTerminal(projectId, sessionType = "project") {
   const screen = $("#terminalScreen");
   if (!screen) return;
   const missing = [];
-  if (typeof Terminal === "undefined") missing.push("xterm 本地静态资源");
-  if (typeof io === "undefined") missing.push("Socket.IO 后端服务");
-  if (missing.length) return toast(`终端不可用：未加载${missing.join("、")}。请重启 Release Lite 服务后重试。`, "error");
+  if (typeof Terminal === "undefined") missing.push("终端组件");
+  if (typeof io === "undefined") missing.push("连接组件");
+  if (missing.length) return toast(`${missing.join("、")}加载失败，请刷新页面`, "error");
   closeTerminal();
   screen.innerHTML = "";
   terminal = new Terminal({
@@ -536,7 +536,7 @@ function openTerminal(projectId, sessionType = "project") {
       capture: true,
     },
   );
-  terminal.write("\x1b[36m正在连接 tmux 交互会话…\x1b[0m\r\n");
+  terminal.write("\x1b[36m正在连接终端…\x1b[0m\r\n");
   terminalSocket = io();
   terminalSocket.on("connect", () => {
     terminalConnectionReady = false;
@@ -557,7 +557,7 @@ function openTerminal(projectId, sessionType = "project") {
     terminal.write(`\r\n\x1b[31m${data.message}\x1b[0m\r\n`);
     toast(data.message, "error");
   });
-  terminalSocket.on("terminal_closed", () => terminal.write("\r\n\x1b[33m终端连接已关闭；tmux 会话仍在后台保留。\x1b[0m\r\n"));
+  terminalSocket.on("terminal_closed", () => terminal.write("\r\n\x1b[33m连接已断开，会话仍在后台运行。\x1b[0m\r\n"));
   terminal.onData((data) =>
     terminalSocket?.emit("terminal_input", {
       data,
@@ -578,7 +578,7 @@ async function act(id, a) {
     const project = projectList.find((item) => item.id === id);
     const detailTab = currentDetailTab(id);
     if (a === "update-dependencies" && project?.process?.running) {
-      const confirmed = confirm("更新依赖需要先停止当前运行中的项目。\n\n停止后服务将暂时不可用，依赖更新完成后可手动重新启动项目。\n\n是否继续？");
+      const confirmed = confirm("停止项目并更新依赖？期间服务不可用，完成后需手动启动。");
       if (!confirmed) return;
       await api(`/api/projects/${id}/action/stop`, {
         method: "POST",
@@ -593,8 +593,8 @@ async function act(id, a) {
         subproject,
       }),
     });
-    if (r.deployment_id) toast("代码更新任务已开始，可在详情页查看日志。");
-    if (r.dependency_update) toast("更新依赖任务已开始，可在依赖更新终端或日志中查看进度。");
+    if (r.deployment_id) toast("代码更新已开始");
+    if (r.dependency_update) toast("依赖更新已开始");
     await refresh();
     if ($("#detail-page").classList.contains("active") && a !== "deploy") details(id, detailTab, true);
     if (["start", "restart"].includes(a)) {
@@ -847,15 +847,15 @@ async function loadNodeVersions() {
     const options = data.versions.length
       ? data.versions.map((version) => `<option value="${esc(version)}" ${version === selectedVersion ? "selected" : ""}>${esc(version)}</option>`).join("")
       : "";
-    select.innerHTML = `<option value="">不指定（使用系统 PATH）</option>${options}`;
-    if (!data.versions.length) toast("未在 NVM 目录中找到已安装的 Node.js 版本", "error");
+    select.innerHTML = `<option value="">系统默认</option>${options}`;
+    if (!data.versions.length) toast("未找到已安装的 Node.js 版本", "error");
   } catch (e) {
     delete select.dataset.loaded;
     toast(e.message, "error");
   }
 }
 function runtimeLabel(runtime, nodeVersion = "") {
-  if (runtime === "node") return `Node.js${nodeVersion ? " " + esc(nodeVersion) : "（系统 PATH）"}`;
+  if (runtime === "node") return `Node.js${nodeVersion ? " " + esc(nodeVersion) : "（系统默认）"}`;
   return (
     {
       python: "Python",
@@ -877,7 +877,7 @@ async function browseDirectories(path = "") {
     const addressInput = (value = "") =>
       `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(value)}" data-path="${esc(value)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()">`;
     if (!data.path) {
-      picker.innerHTML = `<div class="directory-picker-title">选择允许浏览的根目录</div><div class="directory-roots">${rootButtons}</div>`;
+      picker.innerHTML = `<div class="directory-picker-title">选择目录</div><div class="directory-roots">${rootButtons}</div>`;
       return;
     }
     const parent = data.parent ? `<button type="button" class="directory-nav" onclick="browseDirectories('${esc(data.parent)}')">..</button>` : "";
@@ -885,7 +885,7 @@ async function browseDirectories(path = "") {
       ? data.directories
           .map((item) => `<button type="button" class="directory-item" onclick="browseDirectories('${esc(item.path)}')"><i class="bi bi-folder"></i> ${esc(item.name)}</button>`)
           .join("")
-      : '<span class="muted">当前目录没有可浏览的子目录</span>';
+      : '<span class="muted">暂无子目录</span>';
     picker.innerHTML =
       `<div class="directory-picker-head">${addressInput(data.path)}<button type="button" class="btn btn-primary btn-sm" onclick="selectDirectory('${esc(data.path)}')">使用此目录` +
       `</button>` +
@@ -928,7 +928,7 @@ async function loadScripts() {
         root_path: root,
       }),
     });
-    $("#scriptSelect").innerHTML = '<option value="">可选：选择发现的脚本</option>' + list.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+    $("#scriptSelect").innerHTML = '<option value="">选择启动脚本（可选）</option>' + list.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
   } catch (e) {
     toast(e.message, "error");
   }
@@ -1024,7 +1024,7 @@ async function rollback(pid, did) {
     await api(`/api/projects/${pid}/rollback/${did}`, {
       method: "POST",
     });
-    toast("代码回退任务已开始");
+    toast("代码回退已开始");
     details(pid);
   }
 }

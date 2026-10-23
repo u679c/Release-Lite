@@ -10,13 +10,12 @@ window.ProjectForms = (() => {
       `</label>` +
       `<div id="nodeRuntimeFields">` +
       `<label>Node.js 版本` +
-      `<select id="node_version"><option value="${esc(project.node_version || "")}">${esc(project.node_version || "不指定（使用系统 PATH）")}</option>` +
+      `<select id="node_version"><option value="${esc(project.node_version || "")}">${esc(project.node_version || "系统默认")}</option>` +
       `</select>` +
       `</label>` +
       `<label>更新依赖命令` +
       `<input id="node_dependency_command" value="${esc(project.node_dependency_command || "")}" placeholder="例如：pnpm install --frozen-lockfile">` +
       `</label>` +
-      `<span class="hint">选择的 Node.js 版本会用于执行此命令。</span>` +
       `</div>` +
       `<div id="pythonRuntimeFields">` +
       `<label>Python 命令` +
@@ -33,7 +32,7 @@ window.ProjectForms = (() => {
       `<label class="check">` +
       `<input id="auto_install_dependencies" type="checkbox" ${project.auto_install_dependencies ? "checked" : ""}> 更新代码时自动安装 pip 依赖` +
       `</label>` +
-      `</div><p id="genericRuntimeHint" class="hint">直接执行启动命令，适用于 Docker、Java、Go、Shell 等任意运行方式。</p>` +
+      `</div><p id="genericRuntimeHint" class="hint">使用自定义启动命令</p>` +
       `</div>` +
       `</section>`;
   }
@@ -43,7 +42,7 @@ window.ProjectForms = (() => {
       `<input id="subprojects_enabled" type="checkbox" ${p.subprojects_enabled ? "checked" : ""} onchange="toggleSubprojectsConfig()"> 启用子项目` +
       `</label>` +
       `<label id="subprojectsField">子项目配置 ` +
-      `<span class="hint">每行填写“命令 label”；label 可省略，启动命令可使用 {{project}}</span>` +
+      `<span class="hint">每行一个：命令 [显示名称]；启动命令可用 {{project}}</span>` +
       `<textarea id="subprojects" placeholder="kp 知识包后台&#10;bs 书架&#10;ss">${v("subprojects")}</textarea>` +
       `</label>`;
     const advancedConfig = `<details class="advanced-config">` +
@@ -54,10 +53,10 @@ window.ProjectForms = (() => {
       `<input id="stop_command" placeholder="例如：docker compose down" value="${v("stop_command")}">` +
       `</label>` +
       `<div class="form-grid">` +
-      `<label class="git-config-field">更新代码前钩子` +
+      `<label class="git-config-field">更新代码前执行` +
       `<textarea id="pre_deploy_hook" placeholder="例如：npm ci">${v("pre_deploy_hook")}</textarea>` +
       `</label>` +
-      `<label class="git-config-field">更新代码后钩子` +
+      `<label class="git-config-field">更新代码后执行` +
       `<textarea id="post_deploy_hook" placeholder="例如：npm run build">${v("post_deploy_hook")}</textarea>` +
       `</label>` +
       `</div>` +
@@ -73,7 +72,7 @@ window.ProjectForms = (() => {
       `</label>` +
       `</div>` +
       `</details>`;
-    const autoRestartConfig = `<div class="check-row"><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 服务异常退出后自动重启</label></div>`;
+    const autoRestartConfig = `<div class="check-row"><label class="check"><input id="auto_restart" type="checkbox" ${p.auto_restart ? "checked" : ""}> 异常退出后自动重启</label></div>`;
     return `<form id="projectForm" class="config-form" onsubmit="saveProject(event)">` +
       `<input id="id" type="hidden" value="${v("id")}">` +
       `<label class="check non-git-mode">` +
@@ -87,19 +86,19 @@ window.ProjectForms = (() => {
       `<input id="branch" value="${v("branch") || "main"}">` +
       `</label>` +
       `</div>` +
-      `<label>服务器项目目录（绝对路径）` +
+      `<label>项目目录（绝对路径）` +
       `<input id="root_path" required placeholder="/srv/apps/example" value="${v("root_path")}">` +
       `</label>` +
       `<button id="directoryBrowseButton" class="btn btn-outline-secondary btn-sm directory-browse-button" type="button" onclick="browseDirectories($('#root_path').value.trim())">` +
-      `<i class="bi bi-folder2-open"></i> 选择服务器目录` +
+      `<i class="bi bi-folder2-open"></i> 选择目录` +
       `</button>${runtimeConfig(p)}<label>启动命令 ` +
       `<span class="hint">在项目目录中执行；子项目可用 {{project}}</span>` +
       `<input id="start_command" required placeholder="例如：pnpm --filter {{project}} start" value="${v("start_command")}">` +
       `</label>` +
       `<div id="scriptsDiscovery" class="scripts">` +
-      `<button type="button" onclick="loadScripts()">发现目录脚本` +
+      `<button type="button" onclick="loadScripts()">查找启动脚本` +
       `</button>` +
-      `<select id="scriptSelect" onchange="useScript()"><option value="">可选：选择发现的脚本</option>` +
+      `<select id="scriptSelect" onchange="useScript()"><option value="">选择启动脚本（可选）</option>` +
       `</select>` +
       `</div>${subprojectsConfig}${advancedConfig}${autoRestartConfig}<footer>` +
       `<button type="button" onclick="showPage('projects')">取消` +

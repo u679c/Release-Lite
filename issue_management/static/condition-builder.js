@@ -69,9 +69,9 @@ window.IssueConditionBuilder = {
       }));
       const labels = fieldLabels();
       const fields = Object.entries(labels).filter(([field]) => !(kind === "bugs" && field === "hierarchy") && !(kind === "requirements" && field === "environment"));
-      container.innerHTML = rules.map(rule => `<div class="issue-condition-row">${menu(rule, "field", labels[rule.field], fields, [rule.field])}${menu(rule, "operator", rule.operator === "excludes" ? "不包含" : "包含", [["includes", "包含"], ["excludes", "不包含"]], [rule.operator])}${menu(rule, "value", "请选择筛选值", ruleChoices(rule), rule.values, true)}<button type="button" class="issue-condition-remove" aria-label="删除此条件" data-condition-action="remove" data-rule-id="${rule.id}">×` +
+      container.innerHTML = rules.map(rule => `<div class="issue-condition-row">${menu(rule, "field", labels[rule.field], fields, [rule.field])}${menu(rule, "operator", rule.operator === "excludes" ? "不包含" : "包含", [["includes", "包含"], ["excludes", "不包含"]], [rule.operator])}${menu(rule, "value", "选择值", ruleChoices(rule), rule.values, true)}<button type="button" class="issue-condition-remove" aria-label="删除此条件" data-condition-action="remove" data-rule-id="${rule.id}">×` +
         `</button>` +
-        `</div>`).join("") || '<p class="muted issue-condition-empty">暂无条件，点击下方“添加条件”开始筛选。</p>';
+        `</div>`).join("") || '<p class="muted issue-condition-empty">未添加条件</p>';
       for (const details of container.querySelectorAll("details")) {
         details.addEventListener(
           "toggle",

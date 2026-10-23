@@ -310,7 +310,7 @@ class IssueService:
                 "context": include_requirement_context,
                 "error": "",
             }
-            self.progress = f"正在读取创建时间 {date_range['created_from']} 至 {date_range['created_to']} 的记录…"
+            self.progress = "同步中…"
         threading.Thread(
             target=self._sync,
             args=(dict(date_range), include_requirement_context, kind),
@@ -361,7 +361,7 @@ class IssueService:
             )
         except FileNotFoundError as exc:
             raise SyncError(
-                "未找到 lark-cli，请在服务器安装，或配置 RELEASE_LITE_LARK_CLI 指向可执行文件。"
+                "飞书连接未配置，请联系管理员"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise SyncError(f"飞书{operation}超时，请稍后重试。", uncertain=True) from exc
@@ -369,7 +369,7 @@ class IssueService:
             payload = json.loads(result.stdout if result.returncode == 0 else result.stderr)
         except ValueError as exc:
             raise SyncError(
-                "lark-cli 未返回有效 JSON，请检查服务器 CLI 配置与登录状态。", uncertain=True
+                "飞书响应异常，请检查连接与登录状态", uncertain=True
             ) from exc
         if result.returncode != 0 or payload.get("ok") is False:
             error = payload.get("error") or {}
@@ -377,17 +377,17 @@ class IssueService:
                 if domain == "im":
                     if arguments[0] == "chat.members":
                         raise SyncError(
-                            "飞书群成员邀请权限不足或登录已失效，请为当前登录用户授权 im:chat.members:write_only 后重试。"
+                            "无法邀请群成员，请检查飞书登录状态与邀请权限"
                         )
                     raise SyncError(
-                        "飞书建群权限不足或登录已失效，请为当前登录用户授权 im:chat:create_by_user 后重试。"
+                        "无法创建群聊，请检查飞书登录状态与建群权限"
                     )
                 raise SyncError(
-                    "飞书登录已失效或操作权限不足，请在运行面板的服务器用户下执行 lark-cli auth status --json --verify 检查并完成授权。"
+                    "飞书登录失效或权限不足，请重新授权"
                 )
             if error.get("type") == "network":
-                raise SyncError("服务器无法连接飞书，请检查网络后重试同步。", uncertain=True)
-            raise SyncError(f"飞书{operation}失败，请检查 CLI 登录状态及数据表访问权限。")
+                raise SyncError("无法连接飞书，请检查网络后重试", uncertain=True)
+            raise SyncError(f"飞书{operation}失败，请检查登录状态与访问权限")
         return payload
 
     @staticmethod
@@ -461,7 +461,7 @@ class IssueService:
                         downloaded.replace(cached)
             return cached, mime_type
         except OSError as exc:
-            raise SyncError("服务器无法读取或缓存附件，请稍后重试。") from exc
+            raise SyncError("附件加载失败，请稍后重试") from exc
 
     def _read_table(
         self,
@@ -517,7 +517,7 @@ class IssueService:
             arguments.extend(["--format", "ndjson", "--output", filename])
             manifest = self._run(arguments, directory)
             if revision is not None and revision != manifest.get("rev"):
-                raise SyncError("读取期间飞书表数据发生变化，本次未覆盖缓存，请重新同步。")
+                raise SyncError("飞书数据有变化，请重新同步")
             revision = manifest.get("rev")
             columns = {
                 column.get("field_id"): name for name, column in manifest.get("columns", {}).items()
@@ -525,7 +525,7 @@ class IssueService:
             missing = set(config["fields"].values()) - set(columns)
             if missing and manifest.get("records_count") != 0:
                 raise SyncError(
-                    "飞书表字段配置发生变化，请检查 issue_management/service.py 中的字段映射。"
+                    "飞书表配置有变化，请联系管理员检查"
                 )
             page = []
             with (Path(directory) / filename).open(encoding="utf-8") as stream:
@@ -542,16 +542,16 @@ class IssueService:
                             }
                         )
             if len(page) != manifest.get("records_count"):
-                raise SyncError("飞书返回的记录数量不完整，本次未覆盖缓存，请重试。")
+                raise SyncError("飞书数据不完整，请重新同步")
             records.extend(page)
             if not manifest.get("has_more"):
                 break
             next_offset = manifest.get("next_offset")
             if not isinstance(next_offset, int) or next_offset <= offset:
-                raise SyncError("飞书分页信息异常，本次未覆盖缓存。")
+                raise SyncError("飞书数据读取异常，请重新同步")
             offset = next_offset
         if len({row["id"] for row in records}) != len(records):
-            raise SyncError("飞书分页出现重复记录，本次未覆盖缓存，请重试。")
+            raise SyncError("飞书数据读取异常，请重新同步")
         return records
 
     @staticmethod
@@ -651,7 +651,7 @@ class IssueService:
                 raise ValueError("缺少当前需求状态，请刷新后重试")
             if record["expected_status"] not in REQUIREMENT_PRE_TEST_STATUSES:
                 raise ValueError(
-                    "仅提测前的需求可以提测：产品设计中、需求待评审、待开发、开发中、开发完成。"
+                    "部分需求当前无法提测，请取消勾选后重试"
                 )
             expected[record_id] = record["expected_status"]
         record_ids = list(expected)
@@ -682,7 +682,7 @@ class IssueService:
                 ):
                     with self.lock:
                         self._invalidate_snapshot("requirements")
-                    raise IssueBusyError("需求状态已变化或已不在提测前阶段，请同步后重新确认。")
+                    raise IssueBusyError("需求状态已变化，请同步后重试")
                 config = TABLES["requirements"]
                 for offset in range(0, len(record_ids), 200):
                     payload = {
@@ -721,7 +721,7 @@ class IssueService:
                     if attempt < 2:
                         time.sleep(0.5)
                 else:
-                    raise SyncError("部分记录的状态尚未确认为“测试中”")
+                    raise SyncError("部分需求提测结果待确认")
             warning = ""
             with self.lock:
                 if self.snapshot is not None:
@@ -735,14 +735,14 @@ class IssueService:
                     try:
                         self._write_snapshot(snapshot)
                     except OSError:
-                        warning = "飞书已更新，本地缓存保存失败，请重新同步数据。"
+                        warning = "飞书已更新，请重新同步页面数据"
             return {"status": "测试中", "updated_count": len(record_ids), "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
                 with self.lock:
                     self._invalidate_snapshot("requirements")
                 raise SyncError(
-                    f"提测未能确认全部完成：{exc}。部分记录可能已更新，请同步数据后重试。"
+                    f"提测结果待确认，请同步后检查。{exc}"
                 ) from exc
             raise SyncError(str(exc)) from exc
         finally:
@@ -757,7 +757,7 @@ class IssueService:
         chat = chats[0]
         chat_id = chat.get("id")
         if not isinstance(chat_id, str) or not chat_id.startswith("oc_"):
-            raise SyncError("讨论群数据不正确，请同步数据后重试。")
+            raise SyncError("群聊信息无效，请同步后重试")
         return {
             "id": chat_id,
             "name": chat.get("name") or "讨论群",
@@ -780,7 +780,7 @@ class IssueService:
         except FileNotFoundError:
             return {}
         except (OSError, ValueError) as exc:
-            raise SyncError("无法读取建群恢复记录，请先在飞书确认讨论群，避免重复建群。") from exc
+            raise SyncError("无法确认上次建群结果，请先在飞书检查，避免重复建群") from exc
 
     @staticmethod
     def _write_discussion_state(path, state):
@@ -805,7 +805,7 @@ class IssueService:
                 try:
                     self._write_snapshot(snapshot)
                 except OSError:
-                    warning = "讨论群已关联，缓存保存失败，请重新同步数据。"
+                    warning = "群聊已关联，请重新同步页面数据"
         return warning
 
     def create_bug_discussion(self, record_id):
@@ -866,7 +866,7 @@ class IssueService:
                 )
             except SyncError as exc:
                 raise SyncError(
-                    f"群聊已创建，部分成员尚未确认入群：{exc} 请点击“重试关联”继续。"
+                    f"群聊已创建，部分成员入群待确认，请点击“重试关联”。{exc}"
                 ) from exc
             result = result.get("data", result)
             failed = (
@@ -882,7 +882,7 @@ class IssueService:
             self._write_discussion_state(state_path, state)
             if failed:
                 raise SyncError(
-                    "群聊已创建，部分成员无法邀请或需要审批，请在飞书处理后点击“重试关联”。"
+                    "群聊已创建，部分成员未入群，请在飞书处理邀请或审批后点击“重试关联”"
                 )
 
     def _create_discussion(self, kind, record_id, member_fields):
@@ -890,7 +890,7 @@ class IssueService:
         validate_record_id(record_id, label)
         with self.lock:
             if self.syncing or self.submitting:
-                raise IssueBusyError("正在同步数据或更新记录，请稍后重试。")
+                raise IssueBusyError("数据处理中，请稍后重试")
             self.submitting = True
         try:
             state_path = self._discussion_state_path(record_id, kind)
@@ -900,7 +900,7 @@ class IssueService:
                 try:
                     fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
-                    raise IssueBusyError(f"当前{label}正在建群，请稍后刷新。") from exc
+                    raise IssueBusyError(f"{label}正在建群，请稍后刷新") from exc
                 with tempfile.TemporaryDirectory(prefix="release-lite-discussion-") as directory:
                     rows = self._read_table(
                         kind,
@@ -915,7 +915,7 @@ class IssueService:
                     if kind == "requirements" and (
                         self._parent_ids(row) or text(row.get("is_child")) == "是"
                     ):
-                        raise ValueError("只能通过父需求创建或关联群聊")
+                        raise ValueError("请从主需求创建或关联群聊")
                     chat = self._discussion_chat(row)
                     created = False
                     if not chat:
@@ -923,7 +923,7 @@ class IssueService:
                         chat = state.get("chat")
                         if state.get("pending") and not chat:
                             raise SyncError(
-                                "上次建群结果尚未确认，请先在飞书检查并关联讨论群，然后同步数据。"
+                                "建群结果待确认，请在飞书检查并关联群聊后同步"
                             )
                         if not chat:
                             records = (
@@ -943,7 +943,7 @@ class IssueService:
                                 or not re.fullmatch(r"ou_[A-Za-z0-9]+", member)
                                 for member in members
                             ):
-                                raise ValueError("群成员的飞书用户 ID 不正确，请同步后重试。")
+                                raise ValueError("群成员信息无效，请同步后重试")
                             title = (
                                 re.sub(
                                     r"^\[([\s\S]*)\]\(https?://[^\s]+\)$",
@@ -978,7 +978,7 @@ class IssueService:
                             chat_id = result.get("chat_id")
                             if not isinstance(chat_id, str) or not chat_id.startswith("oc_"):
                                 raise SyncError(
-                                    "建群请求已返回，但未取得群 ID，请先在飞书确认结果。"
+                                    "建群结果待确认，请先在飞书检查"
                                 )
                             chat = self._discussion_chat(
                                 {
@@ -1000,7 +1000,7 @@ class IssueService:
                             artifact_prefix="discussion-check-",
                         )
                         if len(latest) != 1 or latest[0]["id"] != record_id:
-                            raise SyncError(f"群已创建，{label}记录暂时无法访问，请稍后重试关联。")
+                            raise SyncError(f"群聊已创建，{label}暂时无法访问，请稍后重试关联")
                         existing = self._discussion_chat(latest[0])
                         if existing:
                             warning = self._cache_discussion(kind, record_id, existing)
@@ -1009,7 +1009,7 @@ class IssueService:
                                 "created": False,
                                 "warning": warning
                                 or (
-                                    f"该{label}已关联其他讨论群，保留原关联；新建群“{chat['name']}”未覆盖它。"
+                                    f"{label}已有讨论群，仍使用原群聊；新群“{chat['name']}”未关联"
                                     if existing["id"] != chat["id"]
                                     else ""
                                 ),
@@ -1057,10 +1057,10 @@ class IssueService:
                                 if attempt < 2:
                                     time.sleep(0.5)
                             else:
-                                raise SyncError("尚未读回讨论群关联")
+                                raise SyncError("群聊关联结果待确认")
                         except SyncError as exc:
                             raise SyncError(
-                                f"讨论群已创建，但关联未能确认：{exc} 再次点击“重试关联”将复用此群。"
+                                f"群聊已创建，关联结果待确认，请点击“重试关联”，无需重新建群。{exc}"
                             ) from exc
                     warning = self._cache_discussion(kind, record_id, chat)
                     try:
@@ -1069,7 +1069,7 @@ class IssueService:
                         pass  # A leftover recovery entry is ignored while the source field is populated.
                     return {"discussion": chat, "created": created, "warning": warning}
         except OSError as exc:
-            raise SyncError("无法保存建群恢复记录，请先同步并确认飞书讨论群后重试。") from exc
+            raise SyncError("建群进度保存失败，请先在飞书确认群聊并同步后重试") from exc
         finally:
             with self.lock:
                 self.submitting = False
@@ -1082,24 +1082,24 @@ class IssueService:
 
     def update_bug_statuses(self, records, status):
         if not isinstance(records, list) or not 1 <= len(records) <= PAGE_SIZE:
-            raise ValueError(f"请选择 1 至 {PAGE_SIZE} 条 bug")
+            raise ValueError(f"请选择 1 至 {PAGE_SIZE} 条 Bug")
         if not isinstance(status, str) or status not in BUG_TARGET_STATUSES:
             raise ValueError("只支持修改为“处理中”、“已修复待发布”或“已修复”")
         expected = {}
         for record in records:
             if not isinstance(record, dict):
-                raise ValueError("bug 状态更新参数格式不正确")
+                raise ValueError("Bug 状态更新请求无效")
             record_id = record.get("id")
             validate_record_id(record_id, "bug ")
             if record_id in expected:
-                raise ValueError("不能重复选择同一条 bug")
+                raise ValueError("不能重复选择同一条 Bug")
             if not isinstance(record.get("expected_status"), str):
-                raise ValueError("缺少当前 bug 状态，请刷新后重试")
+                raise ValueError("Bug 状态缺失，请刷新后重试")
             expected[record_id] = record["expected_status"]
         record_ids = list(expected)
         with self.lock:
             if self.syncing or self.submitting:
-                raise IssueBusyError("正在同步数据或更新记录，请稍后重试。")
+                raise IssueBusyError("数据处理中，请稍后重试")
             self.submitting = True
         write_attempted = False
         try:
@@ -1109,14 +1109,14 @@ class IssueService:
                 )
                 current = {row["id"]: text(row.get("status")) for row in rows}
                 if len(rows) != len(expected) or current.keys() != expected.keys():
-                    raise ValueError("bug 不存在或无权访问")
+                    raise ValueError("Bug 不存在或无权访问")
                 if any(
                     current[record_id] not in (status, expected_status)
                     for record_id, expected_status in expected.items()
                 ):
                     with self.lock:
                         self._invalidate_snapshot("bugs")
-                    raise IssueBusyError("bug 状态已被其他操作修改，请同步后重新确认。")
+                    raise IssueBusyError("Bug 状态已变化，请同步后重试")
                 updates = [record_id for record_id in record_ids if current[record_id] != status]
                 if updates:
                     config = TABLES["bugs"]
@@ -1157,7 +1157,7 @@ class IssueService:
                         if attempt < 2:
                             time.sleep(0.5)
                     else:
-                        raise SyncError("尚未读回目标状态")
+                        raise SyncError("状态更新结果待确认")
             warning = ""
             with self.lock:
                 if self.snapshot is not None:
@@ -1172,14 +1172,14 @@ class IssueService:
                     try:
                         self._write_snapshot(snapshot)
                     except OSError:
-                        warning = "飞书状态已更新，本地缓存保存失败，请重新同步数据。"
+                        warning = "飞书状态已更新，请重新同步页面数据"
             return {"updated_count": len(expected), "status": status, "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
                 with self.lock:
                     self._invalidate_snapshot("bugs")
                 raise SyncError(
-                    f"状态更新结果未能确认：{exc}。记录可能已更新，请同步后确认。"
+                    f"状态更新结果待确认，请同步后检查。{exc}"
                 ) from exc
             raise SyncError(str(exc)) from exc
         finally:
@@ -1252,7 +1252,7 @@ class IssueService:
                 self.sync_attempts.setdefault(kind, {})["error"] = (
                     str(exc)
                     if isinstance(exc, SyncError)
-                    else "同步数据失败，上次成功的数据已保留，请重试。"
+                    else "同步失败，请重试"
                 )
                 self.progress = "同步失败"
         finally:
@@ -1338,7 +1338,7 @@ class IssueService:
         try:
             return self.requirement_priorities.set_priority(records, record_id, priority)
         except OSError as exc:
-            raise SyncError("无法保存本地需求优先级，请稍后重试。") from exc
+            raise SyncError("优先级保存失败，请稍后重试") from exc
 
     def _filter_query_records(
         self, selected, filters, today, condition_filter, dashboard_scope, test_date
@@ -1562,7 +1562,7 @@ class IssueService:
                 snapshot["requirements"] + snapshot.get("requirement_context", [])
             )
         except OSError as exc:
-            raise SyncError("无法读取本地需求优先级，请稍后重试。") from exc
+            raise SyncError("优先级加载失败，请稍后重试") from exc
         # Keep remote snapshots untouched: requirement priorities exist only locally.
         snapshot = {
             **snapshot,
@@ -1582,7 +1582,7 @@ class IssueService:
         conditions = normalize_conditions(filters.get("condition_filter"))
         scope = filters.get("dashboard_scope", "")
         if scope and scope not in DASHBOARD_SCOPES:
-            raise ValueError("提测看板筛选范围不正确")
+            raise ValueError("提测筛选范围无效")
         test_date = calendar_date(filters.get("test_date"))
         if filters.get("test_date") and test_date is None:
             raise ValueError("提测日期格式应为 YYYY-MM-DD")
@@ -1653,13 +1653,13 @@ class IssueService:
         condition_filter = normalize_conditions(filters.get("condition_filter"))
         dashboard_scope = filters.get("dashboard_scope", "")
         if dashboard_scope and dashboard_scope not in DASHBOARD_SCOPES:
-            raise ValueError("提测看板筛选范围不正确")
+            raise ValueError("提测筛选范围无效")
         test_date = calendar_date(filters.get("test_date"))
         if filters.get("test_date") and test_date is None:
             raise ValueError("提测日期格式应为 YYYY-MM-DD")
         bug_stage = filters.get("bug_stage", "all")
         if kind == "bugs" and bug_stage not in BUG_STAGES:
-            raise ValueError("bug 处理阶段不正确")
+            raise ValueError("Bug 处理阶段无效")
         include_family = kind == "requirements" and filters.get("include_family") == "1"
         self.start_sync(date_range, include_requirement_context=include_family, kind=kind)
         with self.lock:

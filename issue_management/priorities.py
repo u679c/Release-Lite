@@ -44,14 +44,14 @@ class RequirementPriorityStore:
             or not isinstance(payload.get("revision"), int)
             or not isinstance(payload.get("assignments"), dict)
         ):
-            raise ValueError("本地需求优先级数据格式不正确")
+            raise ValueError("需求优先级数据无效")
         for value in payload["assignments"].values():
             if (
                 not isinstance(value, dict)
                 or value.get("priority") not in ("", *self.levels)
                 or not isinstance(value.get("revision"), int)
             ):
-                raise ValueError("本地需求优先级数据格式不正确")
+                raise ValueError("需求优先级数据无效")
         return payload
 
     def priorities(self, records):

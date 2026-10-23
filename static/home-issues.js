@@ -39,7 +39,7 @@ window.HomeIssues = (() => {
       </span>
       <span class="home-issues-row-tags">
         <span class="home-issue-priority" data-priority="${escape(priority)}">${escape(priority)}</span>
-        <span class="home-issues-state">${escape(row.status || "未填写状态")}</span>
+        <span class="home-issues-state">${escape(row.status || "状态未填")}</span>
       </span>
     </a>`;
   }
@@ -54,7 +54,7 @@ window.HomeIssues = (() => {
     for (const [kind, selector] of [["requirements", "#homeRequirementsQueue"], ["bugs", "#homeBugsQueue"]]) {
       find(selector).innerHTML = data[kind].length
         ? data[kind].map(row => queueRow(data, row, kind)).join("")
-        : `<p class="home-issues-empty">${data.ranges[kind] ? "当前没有待关注的记录" : "尚未同步数据，请前往总览同步"}</p>`;
+        : `<p class="home-issues-empty">${data.ranges[kind] ? (kind === "requirements" ? "暂无待提测需求" : "暂无待处理 Bug") : "暂无数据，请前往总览同步"}</p>`;
     }
     find("#homeBugsLink").href = route(data, "bugs", { dashboard_scope: "bugs_pending" });
     find("#homeRequirementsLink").href = route(data, "requirements");
@@ -62,15 +62,13 @@ window.HomeIssues = (() => {
     const status = find("#homeIssuesStatus");
     status.hidden = Boolean(ready && data.cache_complete);
     status.textContent = !ready
-      ? "部分数据尚未同步，点击“查看总览”同步后可查看完整关注事项。"
-      : "当前筛选日期范围尚未完整同步，暂时展示本地已缓存的匹配记录。";
+      ? "请前往总览同步数据"
+      : "数据未完整同步，请前往总览补充同步";
     status.classList.remove("has-error");
-    const ranges = Object.entries(data.ranges).filter(([, range]) => range).map(([kind, range]) =>
-      `${kind === "requirements" ? "需求" : "Bug"}创建时间 ${range.created_from} ~ ${range.created_to}`
-    );
     const stamps = Object.values(data.updated_at).filter(Boolean).sort();
-    const stamp = stamps.length ? `最近同步 ${stamps[0].slice(0, 19).replace("T", " ")}` : "";
-    find("#homeIssuesNote").textContent = `${stamp} · 缓存：${ranges.join("；") || "暂无数据"}`;
+    const stamp = stamps.length ? `更新于 ${stamps[0].slice(0, 19).replace("T", " ")}` : "尚未同步";
+    const cacheStatus = ready && data.cache_complete ? "缓存完整" : "缓存待补全";
+    find("#homeIssuesNote").textContent = `${stamp} · ${cacheStatus}`;
   }
 
   async function refresh() {
@@ -84,7 +82,7 @@ window.HomeIssues = (() => {
       const status = find("#homeIssuesStatus");
       status.hidden = false;
       status.classList.add("has-error");
-      status.textContent = `关注事项读取失败：${error.message}，可进入总览查看。`;
+      status.textContent = `加载失败：${error.message}`;
     } finally {
       loading = false;
       root.setAttribute("aria-busy", "false");

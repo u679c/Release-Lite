@@ -26,11 +26,11 @@ def normalize_conditions(payload):
         try:
             payload = json.loads(payload)
         except ValueError as exc:
-            raise ValueError("筛选条件不是有效 JSON") from exc
+            raise ValueError("筛选条件格式无效") from exc
     if payload is None:
         return {"logic": "and", "rules": []}
     if not isinstance(payload, dict) or payload.get("logic", "and") not in ("and", "or"):
-        raise ValueError("筛选条件的组合方式不正确")
+        raise ValueError("筛选条件组合方式无效")
     rules = payload.get("rules", [])
     if not isinstance(rules, list) or len(rules) > 50:
         raise ValueError("筛选条件最多支持 50 条")
@@ -42,10 +42,10 @@ def normalize_conditions(payload):
             or rule["field"] not in CONDITION_FIELDS
             or rule.get("operator") not in ("includes", "excludes")
         ):
-            raise ValueError("筛选字段或操作符不正确")
+            raise ValueError("筛选条件无效")
         values = rule.get("values", [])
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
-            raise ValueError("筛选值应为数组")
+            raise ValueError("筛选值格式无效")
         normalized.append(
             {
                 "field": rule["field"],

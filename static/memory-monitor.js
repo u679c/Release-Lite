@@ -76,21 +76,21 @@ window.MemoryMonitor = (() => {
       `<span>${memoryNumber(memory.total)}</span>` +
       `</div>` +
       `<div>` +
-      `<b>已使用内存：</b>` +
+      `<b>已用内存：</b>` +
       `<span>${memoryNumber(memory.used)}</span>` +
       `</div>` +
       `<div>` +
-      `<b>已缓存文件：</b>` +
+      `<b>文件缓存：</b>` +
       `<span>${memoryNumber(memory.cached)}</span>` +
       `</div>` +
       `<div>` +
-      `<b>已使用的交换：</b>` +
+      `<b>交换空间：</b>` +
       `<span>${memoryNumber(memory.swap_used)}</span>` +
       `</div>` +
       `</div>` +
       `<div class="memory-breakdown">` +
       `<div>` +
-      `<b>App 内存：</b>` +
+      `<b>应用内存：</b>` +
       `<span>${memoryNumber(memory.app_memory)}</span>` +
       `</div>` +
       `<div>` +
@@ -98,7 +98,7 @@ window.MemoryMonitor = (() => {
       `<span>${memoryNumber(memory.wired_memory)}</span>` +
       `</div>` +
       `<div>` +
-      `<b>被压缩：</b>` +
+      `<b>压缩内存：</b>` +
       `<span>${memoryNumber(memory.compressed)}</span>` +
       `</div>` +
       `</div>`;

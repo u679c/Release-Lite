@@ -234,7 +234,7 @@ def browse_roots():
 def allowed_browse_path(path):
     resolved = Path(path).expanduser().resolve()
     if not any(resolved == root or root in resolved.parents for root in browse_roots()):
-        raise RuntimeError("该目录不在允许浏览的根目录中")
+        raise RuntimeError("无权浏览此目录")
     if not resolved.is_dir():
         raise RuntimeError("目录不存在或不可访问")
     return resolved
@@ -1031,7 +1031,7 @@ def terminal_exports(project, env):
 
 def launch_project_terminal(project, root, env, logfile, command):
     if not shutil.which("tmux"):
-        raise RuntimeError("未安装 tmux。请先安装 tmux 后再启动项目。")
+        raise RuntimeError("启动项目需要 tmux，请先安装")
     name = terminal_session_name(project["id"])
     close_project_terminal(project["id"])
     shell = os.environ.get("SHELL", "/bin/zsh")
@@ -1072,7 +1072,7 @@ def launch_project_terminal(project, root, env, logfile, command):
 
 def run_dependency_terminal(project, root, env, logfile, command):
     if not shutil.which("tmux"):
-        raise RuntimeError("未安装 tmux。请先安装 tmux 后再更新依赖。")
+        raise RuntimeError("更新依赖需要 tmux，请先安装")
     name = dependency_terminal_session_name(project["id"])
     subprocess.run(
         ["tmux", "kill-session", "-t", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -1261,7 +1261,7 @@ def terminal_open(data):
                 raise RuntimeError("项目未运行，请先启动项目")
             session_name = terminal_session_name(project_id)
         if not tmux_session_exists(session_name):
-            raise RuntimeError("项目终端会话不存在，请重启项目后重试")
+            raise RuntimeError("终端会话不存在，请重启项目后重试")
         rows = max(1, int(data.get("rows", 24)))
         cols = max(1, int(data.get("cols", 80)))
         master_fd, slave_fd = pty.openpty()

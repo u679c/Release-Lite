@@ -180,4 +180,4 @@ def issue_preferences(kind):
             )
         )
     except OSError:
-        return jsonify(error="服务器无法读取或保存筛选条件，请重试"), 503
+        return jsonify(error="筛选设置读取或保存失败，请重试"), 503
