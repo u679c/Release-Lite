@@ -33,6 +33,13 @@ window.IssueManagement = (() => {
     searchTimer = null;
   let requirementProjects = [],
     activeRequirementProject = "";
+  let projectBindings = null,
+    bindingProjects = [],
+    projectBindingLoading = false,
+    projectBindingSaving = false,
+    projectBindingModifier = false,
+    bindingRequirementProject = "";
+  const projectBindingDialog = find("#issueProjectBindingDialog");
   let conditionFilter = {
     logic: "and",
     rules: []
@@ -512,11 +519,112 @@ window.IssueManagement = (() => {
     if (activeRequirementProject) filters.project = activeRequirementProject;else if (requirementProjects.length) filters.project = [...requirementProjects];else delete filters.project;
   }
   function renderProjectTabs() {
+    renderProjectBindingButton();
     const tabs = find("#issueProjectTabs");
     tabs.hidden = kind !== "requirements";
     if (tabs.hidden) return;
     const projects = ["", ...requirementProjects];
     tabs.innerHTML = projects.map(project => `<button type="button" class="issue-project-tab ${project === activeRequirementProject ? "active" : ""}" role="tab" aria-selected="${project === activeRequirementProject}" aria-controls="issueContent" tabindex="${project === activeRequirementProject ? 0 : -1}" data-requirement-project-tab="${escape(project)}">${escape(project === "" ? "全部" : project === "__empty__" ? "未填写" : project)}</button>`).join("");
+  }
+  function renderProjectBindingButton() {
+    const button = find("#issueOpenProject");
+    const binding = projectBindings?.get(activeRequirementProject);
+    button.hidden = kind !== "requirements" || !activeRequirementProject;
+    button.textContent = binding && !projectBindingModifier ? "打开项目" : "配置项目";
+    button.disabled = projectBindingLoading || projectBindingSaving;
+    button.title = binding ? `${bindingProjects.find(project => project.id === binding.project_id)?.name || ""}（按住 Command / Ctrl 修改配置）` : "";
+  }
+  async function loadProjectBindings(opening) {
+    projectBindingLoading = true;
+    renderProjectBindingButton();
+    try {
+      const result = await request("/api/issues/project-bindings");
+      if (opening !== openSequence) return false;
+      projectBindings = new Map(Object.entries(result.bindings));
+      bindingProjects = result.projects;
+      return true;
+    } catch (error) {
+      if (opening === openSequence) {
+        const status = find("#issueActionStatus");
+        status.textContent = `项目绑定读取失败：${error.message}`;
+        status.className = "small text-danger";
+        status.hidden = false;
+      }
+      return false;
+    } finally {
+      if (opening === openSequence) {
+        projectBindingLoading = false;
+        renderProjectBindingButton();
+      }
+    }
+  }
+  function renderBindingSubprojects(selected = "") {
+    const project = bindingProjects.find(item => item.id === Number(find("#issueBindingProject").value));
+    const options = project?.subprojects || [];
+    find("#issueBindingSubprojectField").hidden = options.length === 0;
+    const select = find("#issueBindingSubproject");
+    select.innerHTML = '<option value="">整个项目</option>' + options.map(option =>
+      `<option value="${escape(option.command)}">${escape(option.display)}</option>`).join("");
+    select.value = options.some(option => option.command === selected) ? selected : "";
+  }
+  async function openBoundProject(event) {
+    if (kind !== "requirements" || !activeRequirementProject || projectBindingLoading || projectBindingSaving) return;
+    const opening = openSequence;
+    const requirementProject = activeRequirementProject;
+    const configure = event.metaKey || event.ctrlKey;
+    if (!await loadProjectBindings(opening) || opening !== openSequence || requirementProject !== activeRequirementProject) return;
+    const binding = projectBindings.get(requirementProject);
+    if (binding && !configure) {
+      const query = binding.subproject ? `?subproject=${encodeURIComponent(binding.subproject)}` : "";
+      location.hash = `#/detail/${binding.project_id}/info${query}`;
+      return;
+    }
+    bindingRequirementProject = requirementProject;
+    find("#issueBindingRequirementProject").textContent = requirementProject === "__empty__" ? "未填写" : requirementProject;
+    const select = find("#issueBindingProject");
+    select.innerHTML = '<option value="">请选择项目</option>' + bindingProjects.map(project =>
+      `<option value="${project.id}">${escape(project.name)}</option>`).join("");
+    select.value = binding ? String(binding.project_id) : "";
+    select.disabled = bindingProjects.length === 0;
+    find("#issueSaveProjectBinding").disabled = bindingProjects.length === 0;
+    renderBindingSubprojects(binding?.subproject || "");
+    const status = find("#issueProjectBindingStatus");
+    status.textContent = bindingProjects.length ? "" : "暂无项目，请先在项目管理中新建项目";
+    status.hidden = bindingProjects.length > 0;
+    projectBindingDialog.showModal();
+  }
+  async function saveProjectBinding(event) {
+    event.preventDefault();
+    if (projectBindingSaving || !find("#issueProjectBindingForm").reportValidity()) return;
+    const opening = openSequence;
+    const payload = {
+      requirement_project: bindingRequirementProject,
+      project_id: Number(find("#issueBindingProject").value),
+      subproject: find("#issueBindingSubproject").value
+    };
+    projectBindingSaving = true;
+    projectBindingDialog.setAttribute("aria-busy", "true");
+    projectBindingDialog.querySelectorAll("button, select").forEach(control => control.disabled = true);
+    find("#issueSaveProjectBinding").textContent = "保存中…";
+    find("#issueProjectBindingStatus").hidden = true;
+    renderProjectBindingButton();
+    try {
+      const saved = await request("/api/issues/project-bindings", { method: "PUT", body: JSON.stringify(payload) });
+      if (opening !== openSequence) return;
+      projectBindings.set(saved.requirement_project, { project_id: saved.project_id, subproject: saved.subproject });
+      projectBindingDialog.close();
+    } catch (error) {
+      if (opening !== openSequence) return;
+      const status = find("#issueProjectBindingStatus");
+      status.textContent = `保存失败：${error.message}`;
+      status.hidden = false;
+    } finally {
+      projectBindingSaving = false;
+      projectBindingDialog.setAttribute("aria-busy", "false");
+      projectBindingDialog.querySelectorAll("button, select").forEach(control => control.disabled = false);
+      find("#issueSaveProjectBinding").textContent = "保存";
+      renderProjectBindingButton();
+    }
   }
   function tableHeader() {
     const columns = kind === "requirements" ? ["标题", filters.sort_by === "priority" ? "版本" : "优先级", "状态", "开发人员", "提测截止日期", "产品", "测试人员", "设计", "群聊"] : ["标题 / 项目", "状态", "优先级", "处理人"];
@@ -1097,6 +1205,11 @@ window.IssueManagement = (() => {
     } else await preferenceQueue;
     if (opening !== openSequence) return;
     kind = nextKind;
+    projectBindings = null;
+    bindingProjects = [];
+    projectBindingLoading = false;
+    find("#issueOpenProject").hidden = true;
+    if (projectBindingDialog.open) projectBindingDialog.close();
     bugNotifications.reset();
     notificationControl.hidden = kind === "requirements";
     allowStaleCache = true;
@@ -1228,6 +1341,7 @@ window.IssueManagement = (() => {
     dropdownControls.refresh();
     renderProjectOptions();
     renderProjectTabs();
+    if (kind === "requirements") loadProjectBindings(opening);
     find("#issueSyncButton").disabled = false;
     load();
     scheduleAutoSync();
@@ -1623,6 +1737,29 @@ window.IssueManagement = (() => {
   }
   );
   find("#issueCloseDetail").addEventListener("click", () => find("#issueDetailDialog").close());
+  find("#issueOpenProject").addEventListener("click", openBoundProject);
+  for (const type of ["keydown", "keyup"]) {
+    window.addEventListener(type, event => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (projectBindingModifier === modifier) return;
+      projectBindingModifier = modifier;
+      renderProjectBindingButton();
+    });
+  }
+  window.addEventListener("blur", () => {
+    projectBindingModifier = false;
+    renderProjectBindingButton();
+  });
+  find("#issueBindingProject").addEventListener("change", () => renderBindingSubprojects());
+  find("#issueProjectBindingForm").addEventListener("submit", saveProjectBinding);
+  for (const id of ["issueCloseProjectBinding", "issueCancelProjectBinding"]) {
+    find(`#${id}`).addEventListener("click", () => {
+      if (!projectBindingSaving) projectBindingDialog.close();
+    });
+  }
+  projectBindingDialog.addEventListener("cancel", event => {
+    if (projectBindingSaving) event.preventDefault();
+  });
   find("#issueBugSkip").addEventListener("click", nextBug);
   for (const button of root.querySelectorAll("[data-requirement-status]")) {
     button.addEventListener("click", () => updateSelectedRequirementStatuses(button.dataset.requirementStatus));

@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS projects (
  requirements_file TEXT DEFAULT 'requirements.txt', auto_install_dependencies INTEGER NOT NULL DEFAULT 1, node_version TEXT DEFAULT '', node_dependency_command TEXT DEFAULT '',
  webhook_secret TEXT NOT NULL, git_webhook_secret TEXT DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS requirement_project_bindings (
+ requirement_project TEXT PRIMARY KEY, project_id INTEGER NOT NULL, subproject TEXT NOT NULL DEFAULT '',
+ FOREIGN KEY(project_id) REFERENCES projects(id)
+);
 CREATE TABLE IF NOT EXISTS deployments (
  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, action TEXT NOT NULL,
  branch TEXT, revision TEXT, status TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
@@ -689,6 +693,61 @@ def list_projects():
     return jsonify(rows("SELECT * FROM projects ORDER BY name"))
 
 
+@app.route("/api/issues/project-bindings", methods=["GET", "PUT"])
+def requirement_project_bindings():
+    if request.method == "GET":
+        projects = rows("SELECT id, name, subprojects_enabled, subprojects FROM projects ORDER BY name")
+        for project in projects:
+            project["subprojects"] = subproject_options(project) if project["subprojects_enabled"] else []
+        project_by_id = {project["id"]: project for project in projects}
+        bindings = rows(
+            "SELECT requirement_project, project_id, subproject FROM requirement_project_bindings"
+        )
+        response = jsonify(
+            bindings={
+                item["requirement_project"]: {"project_id": item["project_id"], "subproject": item["subproject"]}
+                for item in bindings
+                if item["project_id"] in project_by_id
+                and (not item["subproject"] or any(
+                    option["command"] == item["subproject"]
+                    for option in project_by_id[item["project_id"]]["subprojects"]
+                ))
+            },
+            projects=projects,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="项目绑定参数格式不正确"), 400
+    requirement_project = payload.get("requirement_project")
+    project_id = payload.get("project_id")
+    subproject = payload.get("subproject", "")
+    if not isinstance(requirement_project, str) or not requirement_project.strip():
+        return jsonify(error="请选择需求项目"), 400
+    if type(project_id) is not int or project_id <= 0:
+        return jsonify(error="请选择目标项目"), 400
+    if not isinstance(subproject, str):
+        return jsonify(error="子项目参数格式不正确"), 400
+    with closing(db()) as c:
+        # Keep target validation and binding in one transaction, including concurrent deletion.
+        c.execute("BEGIN IMMEDIATE")
+        project = c.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        if project is None:
+            return jsonify(error="目标项目不存在，请重新选择"), 404
+        if subproject and (not project["subprojects_enabled"] or subproject not in {
+            item["command"] for item in subproject_options(dict(project))
+        }):
+            return jsonify(error="所选子项目不在项目配置中，请重新选择"), 400
+        c.execute(
+            "INSERT INTO requirement_project_bindings (requirement_project, project_id, subproject) VALUES (?, ?, ?) "
+            "ON CONFLICT(requirement_project) DO UPDATE SET project_id=excluded.project_id, subproject=excluded.subproject",
+            (requirement_project, project_id, subproject),
+        )
+        c.commit()
+    return jsonify(requirement_project=requirement_project, project_id=project_id, subproject=subproject)
+
+
 @app.get("/api/node-versions")
 def node_versions():
     return jsonify({"versions": installed_node_versions(), "nvm_dir": str(nvm_dir())})
@@ -766,7 +825,10 @@ def save_project():
 def delete_project(project_id):
     p = project_or_404(project_id)
     stop_project(p)
-    write("DELETE FROM projects WHERE id=?", (project_id,))
+    with closing(db()) as c:
+        c.execute("DELETE FROM requirement_project_bindings WHERE project_id=?", (project_id,))
+        c.execute("DELETE FROM projects WHERE id=?", (project_id,))
+        c.commit()
     audit(None, "删除项目", p["name"])
     return jsonify(ok=True)
 
@@ -1361,6 +1423,9 @@ def init():
         for column, statement in migrations.items():
             if column not in columns:
                 c.execute(statement)
+        binding_columns = {row[1] for row in c.execute("PRAGMA table_info(requirement_project_bindings)")}
+        if "subproject" not in binding_columns:
+            c.execute("ALTER TABLE requirement_project_bindings ADD COLUMN subproject TEXT NOT NULL DEFAULT ''")
         process_columns = {row[1] for row in c.execute("PRAGMA table_info(process_state)")}
         if "subproject" not in process_columns:
             c.execute("ALTER TABLE process_state ADD COLUMN subproject TEXT DEFAULT ''")

@@ -9,6 +9,7 @@
       <button class="btn btn-outline-primary btn-sm" type="button" data-requirement-status="开发中" hidden disabled>开发中</button>
     </div>
     <div class="issue-heading-actions">
+      <button id="issueOpenProject" class="btn btn-outline-secondary btn-sm" type="button" hidden>配置项目</button>
       <a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener noreferrer" hidden>
         在飞书打开
         <i class="bi bi-box-arrow-up-right"></i>
@@ -35,6 +36,26 @@
   <p id="issuePreferenceStatus" class="text-danger small" role="status" hidden></p>
   <p id="issueActionStatus" class="small" role="status" aria-live="polite" hidden></p>
   <div id="issueProjectTabs" class="issue-project-tabs" role="tablist" aria-label="按项目查看需求" hidden></div>
+  <dialog id="issueProjectBindingDialog" class="issue-detail-dialog issue-project-binding-dialog" aria-labelledby="issueProjectBindingTitle">
+    <header>
+      <h2 id="issueProjectBindingTitle">配置项目</h2>
+      <button type="button" aria-label="关闭项目配置" id="issueCloseProjectBinding">×</button>
+    </header>
+    <form id="issueProjectBindingForm" class="issue-project-binding-form">
+      <p class="small muted">需求项目：<span id="issueBindingRequirementProject"></span></p>
+      <label for="issueBindingProject" class="small">绑定项目</label>
+      <select id="issueBindingProject" class="form-select" required></select>
+      <div id="issueBindingSubprojectField" class="issue-binding-subproject" hidden>
+        <label for="issueBindingSubproject" class="small">子项目</label>
+        <select id="issueBindingSubproject" class="form-select"></select>
+      </div>
+      <p id="issueProjectBindingStatus" class="small text-danger" role="status" aria-live="polite" hidden></p>
+      <footer>
+        <button id="issueCancelProjectBinding" class="btn btn-outline-secondary btn-sm" type="button">取消</button>
+        <button id="issueSaveProjectBinding" class="btn btn-primary btn-sm" type="submit">保存</button>
+      </footer>
+    </form>
+  </dialog>
   <dialog id="issueFilterDialog" class="issue-detail-dialog issue-filter-dialog" aria-labelledby="issueFilterTitle">
     <header>
       <h2 id="issueFilterTitle">筛选</h2>

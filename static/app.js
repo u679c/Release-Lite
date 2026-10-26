@@ -211,7 +211,7 @@ async function applyRoute() {
   const id = parts[1];
   const tab = ["info", "config", "logs", "terminal"].includes(parts[2]) ? parts[2] : "info";
   if (id === "new") return openEditor(null, true);
-  if (!projectList.some((p) => p.id === Number(id))) await refresh();
+  if (!projectList.some((p) => p.id === Number(id)) || parameters.has("subproject")) await refresh();
   details(Number(id), tab, true);
 }
 function status(p) {
@@ -219,9 +219,14 @@ function status(p) {
   return `<span class="status ${p.process?.running ? "running" : "stopped"}">${p.process?.running ? "运行中" : "已停止"}</span>`;
 }
 function currentDetailTab(id) {
-  const parts = location.hash.replace(/^#\/?/, "").split("/");
+  const parts = location.hash.replace(/^#\/?/, "").split("?")[0].split("/");
   const tab = parts[2];
   return parts[0] === "detail" && Number(parts[1]) === Number(id) && ["info", "config", "logs", "terminal"].includes(tab) ? tab : "info";
+}
+function currentDetailSubproject(id) {
+  const [path, query = ""] = location.hash.replace(/^#\/?/, "").split("?");
+  const parts = path.split("/");
+  return parts[0] === "detail" && Number(parts[1]) === Number(id) ? new URLSearchParams(query).get("subproject") || "" : "";
 }
 async function refresh() {
   try {
@@ -761,8 +766,9 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
   const subprojectOptions = parseSubprojectOptions(p.subprojects);
   const hasSubprojects = Boolean(p.subprojects_enabled);
   const selectedSubproject = subprojectOptions.find((item) => item.command === x.subproject);
+  const preferredSubproject = subprojectOptions.find((item) => item.command === currentDetailSubproject(p.id))?.command || x.subproject;
   const subprojectControl = hasSubprojects
-    ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item.command)}" ${item.command === x.subproject ? "selected" : ""}>${esc(item.display)}</option>`).join("")}</select>`
+    ? `<select id="subprojectSelect" class="form-select subproject-picker" aria-label="选择子项目">${subprojectOptions.map((item) => `<option value="${esc(item.command)}" ${item.command === preferredSubproject ? "selected" : ""}>${esc(item.display)}</option>`).join("")}</select>`
     : "";
   const actionSize = hasSubprojects ? "" : " btn-sm";
   const updating = p.dependency_updating;
@@ -994,7 +1000,8 @@ function selectDirectory(path) {
 }
 function showDetailTab(tab) {
   const id = $("#id")?.value || "new";
-  navigate(`detail/${id}/${tab}`);
+  const subproject = currentDetailSubproject(id);
+  navigate(`detail/${id}/${tab}${subproject ? `?subproject=${encodeURIComponent(subproject)}` : ""}`);
 }
 async function refreshProjectDetail(id) {
   await refresh();

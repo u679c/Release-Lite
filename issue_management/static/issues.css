@@ -1427,6 +1427,24 @@
 .issue-detail-dialog::backdrop {
   background: rgba(16, 24, 40, 0.4);
 }
+.issue-detail-dialog.issue-project-binding-dialog {
+  width: min(440px, 92vw);
+}
+.issue-project-binding-form,
+.issue-binding-subproject {
+  display: grid;
+  gap: 12px;
+}
+.issue-project-binding-form p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.issue-project-binding-form footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
 .issue-detail-dialog > header {
   display: flex;
   align-items: center;
