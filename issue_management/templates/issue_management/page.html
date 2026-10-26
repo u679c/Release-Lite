@@ -4,7 +4,9 @@
       <label role="search">
         <input class="form-control form-control-sm" name="q" form="issueFilters" type="search" placeholder="标题、描述或记录 ID" aria-label="搜索标题、描述或记录 ID" />
       </label>
-      <button class="btn btn-primary btn-sm" id="issueSubmitRequirements" type="button" hidden disabled>提测</button>
+      <button class="btn btn-primary btn-sm" id="issueSubmitRequirements" type="button" data-requirement-status="测试中" hidden disabled>提测</button>
+      <button class="btn btn-outline-primary btn-sm" type="button" data-requirement-status="开发完成" hidden disabled>开发完成</button>
+      <button class="btn btn-outline-primary btn-sm" type="button" data-requirement-status="开发中" hidden disabled>开发中</button>
     </div>
     <div class="issue-heading-actions">
       <a id="issueSource" class="btn btn-outline-secondary btn-sm" target="_blank" rel="noopener noreferrer" hidden>

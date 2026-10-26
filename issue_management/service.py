@@ -648,19 +648,29 @@ class IssueService:
         write_json(self.cache_dir / "snapshot.json", snapshot)
 
     def submit_requirements(self, records):
+        return self._update_requirement_statuses(records, "测试中")
+
+    def update_requirement_statuses(self, records, status):
+        if not isinstance(status, str) or status not in {"开发完成", "开发中"}:
+            raise ValueError("只支持修改为“开发完成”或“开发中”")
+        return self._update_requirement_statuses(records, status)
+
+    def _update_requirement_statuses(self, records, status):
+        submitting_testing = status == "测试中"
+        action = "提测" if submitting_testing else "状态更新"
         if not isinstance(records, list) or not records:
-            raise ValueError("请选择要提测的需求")
+            raise ValueError("请选择要更新状态的需求")
         expected = {}
         for record in records:
             if not isinstance(record, dict):
-                raise ValueError("需求提测参数格式不正确")
+                raise ValueError("需求状态更新参数格式不正确")
             record_id = record.get("id")
             validate_record_id(record_id, "需求")
             if record_id in expected:
                 raise ValueError("不能重复选择同一条需求")
             if not isinstance(record.get("expected_status"), str):
                 raise ValueError("缺少当前需求状态，请刷新后重试")
-            if record["expected_status"] not in REQUIREMENT_PRE_TEST_STATUSES:
+            if submitting_testing and record["expected_status"] not in REQUIREMENT_PRE_TEST_STATUSES:
                 raise ValueError(
                     "部分需求当前无法提测，请取消勾选后重试"
                 )
@@ -668,7 +678,7 @@ class IssueService:
         record_ids = list(expected)
         with self.lock:
             if self.syncing or self.submitting:
-                raise IssueBusyError("正在同步数据或提测，请稍后重试。")
+                raise IssueBusyError("正在同步数据或更新状态，请稍后重试。")
             self.submitting = True
         write_attempted = False
         try:
@@ -688,7 +698,7 @@ class IssueService:
                     raise ValueError("需求不存在或无权访问")
                 if any(
                     current[record_id] != expected_status
-                    or current[record_id] not in REQUIREMENT_PRE_TEST_STATUSES
+                    or (submitting_testing and current[record_id] not in REQUIREMENT_PRE_TEST_STATUSES)
                     for record_id, expected_status in expected.items()
                 ):
                     with self.lock:
@@ -698,7 +708,7 @@ class IssueService:
                 for offset in range(0, len(record_ids), 200):
                     payload = {
                         "update_records": {
-                            item: {config["fields"]["status"]: ["测试中"]}
+                            item: {config["fields"]["status"]: [status]}
                             for item in record_ids[offset : offset + 200]
                         }
                     }
@@ -727,19 +737,19 @@ class IssueService:
                             artifact_prefix=f"submit-verify-{attempt}-{offset}-",
                         )
                         verified.update({row["id"]: text(row.get("status")) for row in rows})
-                    if all(verified.get(item) == "测试中" for item in record_ids):
+                    if all(verified.get(item) == status for item in record_ids):
                         break
                     if attempt < 2:
                         time.sleep(0.5)
                 else:
-                    raise SyncError("部分需求提测结果待确认")
+                    raise SyncError(f"部分需求{action}结果待确认")
             warning = ""
             with self.lock:
                 if self.snapshot is not None:
                     snapshot = {**self.snapshot}
                     for key in ("requirements", "requirement_context"):
                         snapshot[key] = [
-                            {**row, "status": "测试中"} if row["id"] in expected else row
+                            {**row, "status": status} if row["id"] in expected else row
                             for row in snapshot[key]
                         ]
                     self.snapshot = snapshot
@@ -747,13 +757,13 @@ class IssueService:
                         self._write_snapshot(snapshot)
                     except OSError:
                         warning = "飞书已更新，请重新同步页面数据"
-            return {"status": "测试中", "updated_count": len(record_ids), "warning": warning}
+            return {"status": status, "updated_count": len(record_ids), "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
                 with self.lock:
                     self._invalidate_snapshot("requirements")
                 raise SyncError(
-                    f"提测结果待确认，请同步后检查。{exc}"
+                    f"{action}结果待确认，请同步后检查。{exc}"
                 ) from exc
             raise SyncError(str(exc)) from exc
         finally:

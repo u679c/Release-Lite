@@ -55,6 +55,7 @@ window.IssueManagement = (() => {
   const collapsedRequirements = new Set();
   const collapsedVersions = new Set();
   const submittingRequirements = new Set();
+  let submittingRequirementStatus = "";
   const selectedRequirements = new Set();
   const canSubmitRequirement = row => row.can_submit_testing === true;
   let requirementSelectionScope = "";
@@ -557,10 +558,13 @@ window.IssueManagement = (() => {
     const rows = kind === "requirements" ? data?.items || [] : [];
     const count = rows.filter(row => selectedRequirements.has(row.id)).length;
     const busy = Boolean(!data || searchSavePending || submittingRequirements.size || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true");
-    const button = find("#issueSubmitRequirements");
-    button.hidden = kind !== "requirements";
-    button.disabled = busy || count === 0 || !form.checkValidity() || filters.created_from > filters.created_to;
-    button.textContent = submittingRequirements.size ? "提测中…" : count ? `提测 (${count})` : "提测";
+    for (const button of root.querySelectorAll("[data-requirement-status]")) {
+      const status = button.dataset.requirementStatus;
+      const label = status === "测试中" ? "提测" : status;
+      button.hidden = kind !== "requirements" || count === 0;
+      button.disabled = busy || count === 0 || !form.checkValidity() || filters.created_from > filters.created_to;
+      button.textContent = submittingRequirements.size && submittingRequirementStatus === status ? status === "测试中" ? "提测中…" : "更新中…" : count ? `${label} (${count})` : label;
+    }
     for (const checkbox of root.querySelectorAll("[data-requirement-check]")) {
       checkbox.checked = selectedRequirements.has(checkbox.dataset.requirementCheck);
       checkbox.indeterminate = false;
@@ -1373,7 +1377,7 @@ window.IssueManagement = (() => {
       if (currentSelect) currentSelect.disabled = false;
     }
   }
-  async function submitForTesting() {
+  async function updateSelectedRequirementStatuses(status) {
     if (kind !== "requirements" || !data || searchSavePending || submittingRequirements.size || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true" || !form.checkValidity() || filters.created_from > filters.created_to) return;
     const selectedRows = data.items.filter(row => selectedRequirements.has(row.id));
     const records = selectedRows.map(row => ({
@@ -1389,39 +1393,44 @@ window.IssueManagement = (() => {
       actionStatus.classList.toggle("text-success", !failed);
       actionStatus.hidden = false;
     };
-    if (selectedRows.some(row => !canSubmitRequirement(row))) {
+    const submittingTesting = status === "测试中";
+    const action = submittingTesting ? "提测" : "状态更新";
+    if (submittingTesting && selectedRows.some(row => !canSubmitRequirement(row))) {
       showStatus("部分需求当前无法提测，请取消勾选后重试", true);
       return;
     }
     for (const record of records) submittingRequirements.add(record.id);
+    submittingRequirementStatus = status;
     form.inert = true;
     form.elements.q.disabled = true;
     renderRequirementSelection();
     find("#issueSyncButton").disabled = true;
-    showStatus(`正在提测 ${records.length} 条需求…`);
+    showStatus(submittingTesting ? `正在提测 ${records.length} 条需求…` : `正在将 ${records.length} 条需求标记为“${status}”…`);
     try {
       const result = await request(
-        "/api/issues/requirements/submit-testing",
+        submittingTesting ? "/api/issues/requirements/submit-testing" : "/api/issues/requirements/status",
         {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          records
+          records,
+          status
         })
       }
       );
       if (opening !== openSequence) return;
       selectedRequirements.clear();
-      showStatus(result.warning || `${result.updated_count} 条需求已提测`, Boolean(result.warning));
+      showStatus(result.warning || (submittingTesting ? `${result.updated_count} 条需求已提测` : `${result.updated_count} 条需求已标记为“${result.status}”`), Boolean(result.warning));
       await load();
     } catch (error) {
       if (opening !== openSequence) return;
-      showStatus(`提测失败：${error.message}`, true);
+      showStatus(`${action}失败：${error.message}`, true);
       await load();
     } finally {
       submittingRequirements.clear();
+      submittingRequirementStatus = "";
       if (opening === openSequence) {
         form.inert = false;
         form.elements.q.disabled = false;
@@ -1615,7 +1624,9 @@ window.IssueManagement = (() => {
   );
   find("#issueCloseDetail").addEventListener("click", () => find("#issueDetailDialog").close());
   find("#issueBugSkip").addEventListener("click", nextBug);
-  find("#issueSubmitRequirements").addEventListener("click", submitForTesting);
+  for (const button of root.querySelectorAll("[data-requirement-status]")) {
+    button.addEventListener("click", () => updateSelectedRequirementStatuses(button.dataset.requirementStatus));
+  }
   find("#issueBugDetail").addEventListener(
     "error",
     event => {

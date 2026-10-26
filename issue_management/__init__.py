@@ -126,6 +126,18 @@ def submit_requirements():
     )
 
 
+@blueprint.post("/api/issues/requirements/status")
+def update_requirement_statuses():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify(error="状态更新参数格式不正确"), 400
+    return jsonify(
+        current_app.extensions["issue_management"].update_requirement_statuses(
+            payload.get("records"), payload.get("status")
+        )
+    )
+
+
 @blueprint.post("/api/issues/bugs/<record_id>/status")
 def update_bug_status(record_id):
     payload = request.get_json(silent=True)
