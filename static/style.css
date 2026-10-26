@@ -184,6 +184,21 @@ body {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.sidebar-ip {
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-ip-copy {
+  margin-left: 4px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.sidebar-ip-copy:hover {
+  color: #fff;
+}
 .online-dot {
   display: inline-block;
   background: #32d583;
@@ -196,6 +211,72 @@ body {
   margin-left: var(--sidebar-width);
   width: calc(100% - var(--sidebar-width));
   min-width: 0;
+}
+.page-tabs {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  overflow-x: auto;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+}
+.page-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  border-radius: 3px;
+  background: #f0f2f5;
+  color: var(--muted);
+}
+.page-tab:hover {
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+.page-tab.active {
+  background: var(--blue);
+  color: #fff;
+}
+.page-tab-entry,
+.page-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.page-tab-entry {
+  padding: 4px 2px 4px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  white-space: nowrap;
+}
+.page-tab-entry:hover {
+  background: transparent;
+}
+.page-tab-close {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin: 0 4px;
+  padding: 0;
+  border-radius: 3px;
+  font-size: 14px;
+}
+.page-tab-close:hover {
+  background: rgba(16, 24, 40, 0.08);
+}
+.page-tab.active .page-tab-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+.page-tab-entry:focus-visible,
+.page-tab-close:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
 }
 :root.sidebar-collapsed {
   --sidebar-width: 62px;

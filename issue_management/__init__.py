@@ -81,10 +81,10 @@ def issue_sync():
         return jsonify(error="不支持的同步范围"), 400
     date_range = parse_date_range(request.args)
     include_family = kind == "requirements" and request.args.get("include_family") == "1"
-    service.start_sync(
-        date_range, force=True, include_requirement_context=include_family, kind=kind
+    sync_id = service.start_sync(
+        date_range, include_requirement_context=include_family, kind=kind
     )
-    return jsonify(service.status(date_range, include_family, kind))
+    return jsonify({**service.status(date_range, include_family, kind), "sync_id": sync_id})
 
 
 @blueprint.put("/api/issues/requirements/<record_id>/priority")

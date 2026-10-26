@@ -1,0 +1,68 @@
+.notification-test-page {
+  padding: 48px 16px;
+}
+.notification-test-main {
+  max-width: 700px;
+  margin: 0 auto;
+}
+.notification-test-main h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 650;
+}
+.notification-test-main h2 {
+  font-size: 16px;
+}
+.notification-test-form,
+.notification-test-form label {
+  display: grid;
+  gap: 8px;
+}
+.notification-test-form {
+  gap: 20px;
+  font-size: 13px;
+}
+.notification-test-options {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(100px, 1fr);
+  gap: 16px;
+}
+.notification-test-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.notification-test-status:empty {
+  display: none;
+}
+.notification-test-tasks {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.notification-test-tasks li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.notification-test-tasks strong {
+  display: block;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.notification-test-tasks small {
+  color: var(--muted);
+}
+.notification-test-tasks button {
+  flex-shrink: 0;
+}
+@media (max-width: 520px) {
+  .notification-test-options {
+    grid-template-columns: 1fr;
+  }
+}

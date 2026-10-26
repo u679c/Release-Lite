@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from calendar import monthrange
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
@@ -272,16 +273,13 @@ class IssueService:
         }
 
     def start_sync(
-        self, date_range, force=False, include_requirement_context=False, kind="overview"
+        self, date_range, include_requirement_context=False, kind="overview"
     ):
         with self.lock:
             if self.syncing or self.submitting:
                 return
             metadata = (self.snapshot or {}).get("table_sync", {})
             targets = self._sync_targets(kind)
-            matches = all(
-                metadata.get(target, {}).get("date_range") == date_range for target in targets
-            )
             requirement_meta = metadata.get("requirements", {})
             has_context = requirement_meta.get("date_range") == date_range and requirement_meta.get(
                 "context_complete"
@@ -289,20 +287,6 @@ class IssueService:
             include_requirement_context = "requirements" in targets and (
                 include_requirement_context or bool(has_context)
             )
-            needs_context = include_requirement_context and not has_context
-            updated = (
-                min(metadata[target].get("timestamp", 0) for target in targets) if matches else 0
-            )
-            attempt = self.sync_attempts.get(kind, {})
-            recent_attempt = (
-                attempt.get("date_range") == date_range
-                and attempt.get("context") == include_requirement_context
-                and time.time() - attempt.get("at", 0) < 60
-            )
-            if not force and (
-                recent_attempt or (not needs_context and time.time() - updated < 300)
-            ):
-                return
             self.syncing = True
             self.sync_attempts[kind] = {
                 "at": time.time(),
@@ -311,12 +295,14 @@ class IssueService:
                 "error": "",
             }
             self.progress = "同步中…"
+            sync_id = uuid.uuid4().hex
         threading.Thread(
             target=self._sync,
-            args=(dict(date_range), include_requirement_context, kind),
+            args=(dict(date_range), include_requirement_context, kind, sync_id),
             daemon=True,
             name="issue-sync",
         ).start()
+        return sync_id
 
     def _invalidate_snapshot(self, kind):
         # Called while holding self.lock after an uncertain remote update.
@@ -1186,7 +1172,7 @@ class IssueService:
             with self.lock:
                 self.submitting = False
 
-    def _sync(self, date_range, include_requirement_context=False, kind="overview"):
+    def _sync(self, date_range, include_requirement_context=False, kind="overview", sync_id=""):
         try:
             targets = self._sync_targets(kind)
             table_names = (*targets, "projects", "versions") if "bugs" in targets else targets
@@ -1218,6 +1204,7 @@ class IssueService:
                 "timestamp": time.time(),
                 "updated_at": datetime.now(SHANGHAI).isoformat(timespec="seconds"),
                 "context_complete": include_requirement_context,
+                "sync_id": sync_id,
             }
             with self.lock:
                 previous = self.snapshot or {
@@ -1661,7 +1648,7 @@ class IssueService:
         if kind == "bugs" and bug_stage not in BUG_STAGES:
             raise ValueError("Bug 处理阶段无效")
         include_family = kind == "requirements" and filters.get("include_family") == "1"
-        self.start_sync(date_range, include_requirement_context=include_family, kind=kind)
+        # Page reads never start a remote sync; only the explicit sync endpoint does.
         with self.lock:
             snapshot, status = self.snapshot, self._status(date_range, include_family, kind)
             if not status["ready"] and snapshot is not None and filters.get("allow_stale") == "1":
@@ -1792,6 +1779,13 @@ class IssueService:
             "counts": counts,
             "items": items,
             "bug_stages": bug_stages,
+            "bug_notifications": {
+                "sync_id": snapshot.get("table_sync", {}).get("bugs", {}).get("sync_id", ""),
+                "all_ids": [row["id"] for row in snapshot["bugs"]],
+                "items": [{"id": row["id"], "title": row["title"]} for row in bugs],
+            }
+            if kind in ("overview", "bugs")
+            else None,
             "dashboard": summarize(
                 requirements,
                 bugs,

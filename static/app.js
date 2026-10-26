@@ -30,6 +30,32 @@ function toast(message, type = "info") {
     setTimeout(() => item.remove(), 180);
   }, 3000);
 }
+async function copyServerIp() {
+  const ip = serverInfo.local_ip;
+  if (!ip) return toast("暂未获取到 IP", "info");
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(ip);
+    } else {
+      const input = document.createElement("textarea");
+      const activeElement = document.activeElement;
+      input.value = ip;
+      input.style.cssText = "position:fixed;opacity:0;pointer-events:none";
+      input.setAttribute("readonly", "");
+      document.body.appendChild(input);
+      try {
+        input.select();
+        if (!document.execCommand("copy")) throw new Error("Copy failed");
+      } finally {
+        input.remove();
+        activeElement?.focus();
+      }
+    }
+    toast("IP 已复制", "success");
+  } catch {
+    toast("复制失败，请手动复制 IP", "error");
+  }
+}
 const api = ReleaseLite.request;
 const esc = ReleaseLite.escapeHtml;
 function parseSubprojectOptions(value) {
@@ -69,6 +95,59 @@ function navigate(route) {
 }
 function showPage(page) {
   navigate(page);
+}
+const pageTabLabels = new Map([
+  ["overview", "首页"],
+  ["projects", "项目管理"],
+  ["issues", "需求与 Bug 管理"],
+  ["requirements", "需求管理"],
+  ["bugs", "Bug 管理"],
+  ["tmux", "Tmux 管理"],
+  ["storage", "日志管理"],
+  ["operations", "操作记录"],
+]);
+const openedPageTabs = new Map();
+function updatePageTabs(page, route) {
+  const container = $("#pageTabs");
+  if (!container) return;
+  if (pageTabLabels.has(page)) openedPageTabs.set(page, route || page);
+  container.replaceChildren();
+  for (const [key, target] of openedPageTabs) {
+    const label = pageTabLabels.get(key);
+    const item = document.createElement("div");
+    item.className = "page-tab";
+    item.classList.toggle("active", key === page);
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "page-tab-entry";
+    entry.textContent = label;
+    entry.title = label;
+    if (key === page) entry.setAttribute("aria-current", "page");
+    entry.addEventListener("click", () => navigate(target));
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "page-tab-close";
+    close.setAttribute("aria-label", `移除${label}标签`);
+    close.title = "关闭标签";
+    close.innerHTML = '<i class="bi bi-x" aria-hidden="true"></i>';
+    close.addEventListener("click", () => {
+      const next = item.nextElementSibling || item.previousElementSibling;
+      openedPageTabs.delete(key);
+      item.remove();
+      container.hidden = openedPageTabs.size === 0;
+      if (next) next.querySelector(".page-tab-entry").focus();
+    });
+    item.append(entry, close);
+    container.appendChild(item);
+  }
+  container.hidden = openedPageTabs.size === 0;
+  const active = container.querySelector(".page-tab.active");
+  if (active) {
+    if (active.offsetLeft < container.scrollLeft) container.scrollLeft = active.offsetLeft;
+    else if (active.offsetLeft + active.offsetWidth > container.scrollLeft + container.clientWidth) {
+      container.scrollLeft = active.offsetLeft + active.offsetWidth - container.clientWidth;
+    }
+  }
 }
 function initializeSidebar() {
   const toggle = $("#sidebarToggle");
@@ -121,6 +200,8 @@ async function applyRoute() {
   const parameters = new URLSearchParams(queryIndex < 0 ? "" : route.slice(queryIndex + 1));
   const parts = path.split("/").filter(Boolean);
   const page = parts[0] || "overview";
+  const tabPage = pageTabLabels.has(page) || page === "detail" ? page : "overview";
+  updatePageTabs(tabPage, tabPage === page ? route : "overview");
   if (["issues", "requirements", "bugs"].includes(page)) {
     activatePage("issues");
     return IssueManagement.open(page === "issues" ? "overview" : page, parameters);
@@ -147,6 +228,7 @@ async function refresh() {
     projectList = d.projects;
     const s = d.system;
     serverInfo = s;
+    $("#sidebarIp").textContent = s.local_ip || "未获取";
     MemoryMonitor.render(s.memory);
     $("#metrics").innerHTML = [
       ["CPU 使用率", s.cpu_percent + "%", s.cpu_count + " 核心"],

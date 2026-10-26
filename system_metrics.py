@@ -1,5 +1,6 @@
 """Host network, disk and memory measurements used by the overview APIs."""
 
+import ipaddress
 import os
 import re
 import socket
@@ -10,24 +11,50 @@ import psutil
 
 
 def server_ip():
-    # 优先取默认路由对应的网卡地址，而不是 hostname 解析出的回环地址。
+    # 外网出口可能被代理接管，只用它在可用的局域网网卡之间辅助选择。
+    route_address = None
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("8.8.8.8", 80))
-            address = probe.getsockname()[0]
-            if address and not address.startswith("127."):
-                return address
+            route_address = probe.getsockname()[0]
     except OSError:
         pass
     states = psutil.net_if_stats()
+    candidates = []
+    virtual_prefixes = (
+        "utun", "tun", "tap", "bridge", "docker", "veth", "vmnet",
+        "vboxnet", "virbr", "br-", "tailscale", "wg", "awdl", "llw", "ipsec", "ppp",
+    )
     for interface, addresses in psutil.net_if_addrs().items():
-        if not states.get(interface) or not states[interface].isup:
+        if (
+            not states.get(interface)
+            or not states[interface].isup
+            or interface.lower().startswith(virtual_prefixes)
+        ):
             continue
         for address in addresses:
-            if address.family == socket.AF_INET and not address.address.startswith(
-                ("127.", "169.254.")
+            if address.family != socket.AF_INET:
+                continue
+            ip = ipaddress.IPv4Address(address.address)
+            if (
+                ip.is_loopback
+                or ip.is_link_local
+                or ip.is_unspecified
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip in ipaddress.IPv4Network("198.18.0.0/15")
             ):
-                return address.address
+                continue
+            candidates.append((interface, address.address))
+    if candidates:
+        # 常见有线/Wi-Fi 网卡优先；不要求必须是私有地址，兼容实际网段配置。
+        return min(
+            candidates,
+            key=lambda item: (
+                not item[0].lower().startswith(("en", "eth", "wl")),
+                item[1] != route_address,
+            ),
+        )[1]
     return "127.0.0.1"
 
 

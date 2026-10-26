@@ -1,69 +1,104 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Release Lite</title>
-    <link rel="icon" type="image/png" href="/static/favicon.png" />
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
-    <link href="/static/vendor/xterm/xterm.css?v=5.3.0" rel="stylesheet" />
-    <link href="/static/vendor/viewerjs/viewer.min.css?v=1.11.7" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/style.css" />
-    <link rel="stylesheet" href="/static/home-issues.css" />
-    <link rel="stylesheet" href="{{ url_for('issue_management.static', filename='issues.css') }}" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="sidebar" id="sidebar">
-        <button class="sidebar-toggle" id="sidebarToggle" type="button"   aria-controls="sidebarNav" aria-expanded="true"><i class="bi bi-chevron-left" aria-hidden="true"></i></button>
-        <a
-          class="brand"
-          href="#"
-          onclick="
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Release Lite</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <link href="/static/vendor/xterm/xterm.css?v=5.3.0" rel="stylesheet" />
+  <link href="/static/vendor/viewerjs/viewer.min.css?v=1.11.7" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/home-issues.css" />
+  <link rel="stylesheet" href="{{ url_for('issue_management.static', filename='issues.css') }}" />
+</head>
+
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-controls="sidebarNav" aria-expanded="true"><i
+          class="bi bi-chevron-left" aria-hidden="true"></i></button>
+      <a class="brand" href="#" onclick="
             showPage('overview');
             return false;
-          "
-          ><span class="brand-mark">R</span><span>Release <b>Lite</b><small>发布管理台</small></span></a
-        >
-        <nav class="nav flex-column" id="sidebarNav" aria-label="主导航">
-          <button class="nav-link active" data-page="overview" title="首页" aria-label="首页" onclick="showPage('overview')">
-            <span class="nav-icon"><i class="bi bi-speedometer2" aria-hidden="true"></i></span><span class="nav-label">首页</span>
+          "><span class="brand-mark">R</span><span>Release <b>Lite</b><small>发布管理台</small></span></a>
+      <nav class="nav flex-column" id="sidebarNav" aria-label="主导航">
+        <button class="nav-link active" data-page="overview" title="首页" aria-label="首页" onclick="showPage('overview')">
+          <span class="nav-icon"><i class="bi bi-speedometer2" aria-hidden="true"></i></span><span
+            class="nav-label">首页</span>
+        </button>
+        <button class="nav-link" data-page="projects" title="项目管理" aria-label="项目管理" onclick="showPage('projects')">
+          <span class="nav-icon"><i class="bi bi-box-seam" aria-hidden="true"></i></span><span
+            class="nav-label">项目管理</span>
+        </button>
+        <button class="nav-link issue-menu-toggle" id="issueMenuToggle" type="button" data-issue-kind="overview"
+          title="需求与 Bug 管理" aria-label="需求与 Bug 管理" aria-controls="issueMenu" aria-expanded="false"
+          onclick="toggleIssueMenu()"><span class="nav-icon"><i class="bi bi-kanban" aria-hidden="true"></i></span><span
+            class="nav-label">需求与 Bug 管理</span><i class="bi bi-chevron-down more-menu-arrow"
+            aria-hidden="true"></i></button>
+        <div id="issueMenu" class="sidebar-submenu" hidden>
+          <button class="nav-link" type="button" data-issue-kind="requirements" title="需求管理" aria-label="需求管理"
+            onclick="showPage('requirements')"><span class="nav-icon"><i class="bi bi-card-checklist"
+                aria-hidden="true"></i></span><span class="nav-label">需求管理</span></button>
+          <button class="nav-link" type="button" data-issue-kind="bugs" title="Bug 管理" aria-label="Bug 管理"
+            onclick="showPage('bugs')"><span class="nav-icon"><i class="bi bi-bug" aria-hidden="true"></i></span><span
+              class="nav-label">Bug 管理</span></button>
+        </div>
+
+        <button class="nav-link more-menu-toggle" type="button" title="更多" aria-label="更多" aria-controls="moreMenu"
+          aria-expanded="false" onclick="toggleMoreMenu()"><span class="nav-icon"><i class="bi bi-three-dots"
+              aria-hidden="true"></i></span><span class="nav-label">更多</span><i
+            class="bi bi-chevron-down more-menu-arrow" aria-hidden="true"></i></button>
+        <div id="moreMenu" class="sidebar-submenu" hidden>
+          <button class="nav-link" data-page="tmux" title="Tmux 管理" aria-label="Tmux 管理"
+            onclick="showPage('tmux')"><span class="nav-icon"><i class="bi bi-terminal"
+                aria-hidden="true"></i></span><span class="nav-label">Tmux 管理</span></button>
+          <button class="nav-link" data-page="storage" title="日志管理" aria-label="日志管理"
+            onclick="showPage('storage')"><span class="nav-icon"><i class="bi bi-device-hdd"
+                aria-hidden="true"></i></span><span class="nav-label">日志管理</span></button>
+          <button class="nav-link" data-page="operations" title="操作记录" aria-label="操作记录"
+            onclick="showPage('operations')">
+            <span class="nav-icon"><i class="bi bi-clock-history" aria-hidden="true"></i></span><span
+              class="nav-label">操作记录</span>
           </button>
-          <button class="nav-link" data-page="projects" title="项目管理" aria-label="项目管理" onclick="showPage('projects')">
-            <span class="nav-icon"><i class="bi bi-box-seam" aria-hidden="true"></i></span><span class="nav-label">项目管理</span>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+
+        <div class="sidebar-ip">
+          <span class="online-dot"></span><span id="sidebarIp">获取中…</span>
+          <button class="sidebar-ip-copy" type="button" title="复制 IP" aria-label="复制 IP" onclick="copyServerIp()">
+            <i class="bi bi-copy" aria-hidden="true"></i>
           </button>
-          <button class="nav-link issue-menu-toggle" id="issueMenuToggle" type="button" data-issue-kind="overview" title="需求与 Bug 管理" aria-label="需求与 Bug 管理" aria-controls="issueMenu" aria-expanded="false" onclick="toggleIssueMenu()"><span class="nav-icon"><i class="bi bi-kanban" aria-hidden="true"></i></span><span class="nav-label">需求与 Bug 管理</span><i class="bi bi-chevron-down more-menu-arrow" aria-hidden="true"></i></button>
-          <div id="issueMenu" class="sidebar-submenu" hidden>
-            <button class="nav-link" type="button" data-issue-kind="requirements" title="需求管理" aria-label="需求管理" onclick="showPage('requirements')"><span class="nav-icon"><i class="bi bi-card-checklist" aria-hidden="true"></i></span><span class="nav-label">需求管理</span></button>
-            <button class="nav-link" type="button" data-issue-kind="bugs" title="Bug 管理" aria-label="Bug 管理" onclick="showPage('bugs')"><span class="nav-icon"><i class="bi bi-bug" aria-hidden="true"></i></span><span class="nav-label">Bug 管理</span></button>
-          </div>
-          
-          <button class="nav-link more-menu-toggle" type="button" title="更多" aria-label="更多" aria-controls="moreMenu" aria-expanded="false" onclick="toggleMoreMenu()"><span class="nav-icon"><i class="bi bi-three-dots" aria-hidden="true"></i></span><span class="nav-label">更多</span><i class="bi bi-chevron-down more-menu-arrow" aria-hidden="true"></i></button>
-          <div id="moreMenu" class="sidebar-submenu" hidden>
-            <button class="nav-link" data-page="tmux" title="Tmux 管理" aria-label="Tmux 管理" onclick="showPage('tmux')"><span class="nav-icon"><i class="bi bi-terminal" aria-hidden="true"></i></span><span class="nav-label">Tmux 管理</span></button>
-            <button class="nav-link" data-page="storage" title="日志管理" aria-label="日志管理" onclick="showPage('storage')"><span class="nav-icon"><i class="bi bi-device-hdd" aria-hidden="true"></i></span><span class="nav-label">日志管理</span></button>
-            <button class="nav-link" data-page="operations" title="操作记录" aria-label="操作记录" onclick="showPage('operations')">
-            <span class="nav-icon"><i class="bi bi-clock-history" aria-hidden="true"></i></span><span class="nav-label">操作记录</span>
-          </button>
-          </div>
-        </nav>
-        <div class="sidebar-footer"><span class="online-dot"></span> 服务运行中</div>
-      </aside>
-      <div class="main-area">
-        <main class="content-area">
-          {% include 'pages/overview.html' %}
-          {% include 'pages/projects.html' %}
-          {% include 'pages/operations.html' %}
-          {% include 'pages/tmux.html' %}
-          {% include 'pages/storage.html' %}
-          {% include 'issue_management/page.html' %}
-          {% include 'pages/detail.html' %}
+        </div>
+
+      </div>
+    </aside>
+    <div class="main-area">
+      <nav class="page-tabs" id="pageTabs" aria-label="已打开的页面" hidden></nav>
+      <main class="content-area">
+        {% include 'pages/overview.html' %}
+        {% include 'pages/projects.html' %}
+        {% include 'pages/operations.html' %}
+        {% include 'pages/tmux.html' %}
+        {% include 'pages/storage.html' %}
+        {% include 'issue_management/page.html' %}
+        {% include 'pages/detail.html' %}
       </main>
     </div>
   </div>
-  <dialog id="directoryDialog" class="directory-dialog"><section><header><h2>选择服务器目录</h2><button aria-label="关闭" onclick="$('#directoryDialog').close()">×</button></header><div id="directoryPicker"></div></section></dialog>
+  <dialog id="directoryDialog" class="directory-dialog">
+    <section>
+      <header>
+        <h2>选择服务器目录</h2><button aria-label="关闭" onclick="$('#directoryDialog').close()">×</button>
+      </header>
+      <div id="directoryPicker"></div>
+    </section>
+  </dialog>
   <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+  <div id="bugNotificationContainer" class="issue-bug-notifications" aria-live="polite"></div>
   <script src="/static/vendor/socket.io/socket.io.min.js?v=4.7.5"></script>
   <script src="/static/vendor/xterm/xterm.min.js?v=5.3.0"></script>
   <script src="/static/vendor/xterm/xterm-addon-fit.min.js?v=0.8.0"></script>
@@ -72,10 +107,12 @@
   <script src="{{ url_for('issue_management.static', filename='filter-controls.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='condition-builder.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='dashboard.js') }}"></script>
+  <script src="{{ url_for('issue_management.static', filename='bug-notifications.js') }}"></script>
   <script src="{{ url_for('issue_management.static', filename='issues.js') }}"></script>
   <script src="/static/memory-monitor.js"></script>
   <script src="/static/project-forms.js"></script>
   <script src="/static/home-issues.js"></script>
   <script src="/static/app.js?v=issues-v1"></script>
-  </body>
+</body>
+
 </html>

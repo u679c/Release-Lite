@@ -643,6 +643,11 @@ def index():
     return render_template("index.html")
 
 
+@app.get("/test")
+def notification_test():
+    return render_template("test.html")
+
+
 @app.get("/api/overview")
 def overview():
     projects = rows("SELECT * FROM projects ORDER BY name")

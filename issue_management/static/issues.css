@@ -46,6 +46,59 @@
   font-size: 12px;
   margin: -5px 0 20px;
 }
+.issue-bug-notifications {
+  position: fixed;
+  top: 24px;
+  right: 16px;
+  z-index: 2001;
+  display: grid;
+  gap: 12px;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: none;
+}
+.issue-bug-notification {
+  position: relative;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 8px 24px #1018281f;
+  pointer-events: auto;
+}
+.issue-bug-notification strong {
+  display: block;
+  padding-right: 28px;
+  font-size: 14px;
+}
+.issue-bug-notification p {
+  margin: 10px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.issue-bug-notification-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+}
+.issue-bug-notification-close:hover {
+  background: #f2f4f7;
+  color: var(--ink);
+}
 .issue-sync-error {
   color: #b54708;
   background: #fffaeb;

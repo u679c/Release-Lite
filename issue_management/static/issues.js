@@ -10,6 +10,10 @@ window.IssueManagement = (() => {
     bugs: "Bug 管理"
   };
   const autoSyncControl = find("#issueAutoSync");
+  const notificationControl = find("#issueBugNotifications");
+  const bugNotifications = BugNotifications.create(notificationControl, () => {
+    if (data) observeBugNotifications(data);
+  });
   const autoSyncInterval = 60 * 1000;
   const autoSyncSettings = {
     overview: false,
@@ -18,6 +22,8 @@ window.IssueManagement = (() => {
   };
   let autoSyncTimer = null,
     syncRequestPending = false;
+  let filterSyncPending = false,
+    latestSyncStatus = null;
   let kind = "overview",
     filters = {},
     page = 1,
@@ -196,7 +202,7 @@ window.IssueManagement = (() => {
     dropdownControls.refresh();
     page = 1;
     savePreferences();
-    load();
+    load(true);
   }
   );
   const date = value => value ? escape(value.slice(0, 10)) : "";
@@ -346,6 +352,7 @@ window.IssueManagement = (() => {
     );
   }
   function setStatus(sync) {
+    latestSyncStatus = sync;
     const status = find("#issueSyncStatus");
     const range = sync.date_range;
     if (range) {
@@ -366,7 +373,36 @@ window.IssueManagement = (() => {
     find("#issueSyncButton").disabled = sync.syncing || sync.submitting || submittingRequirements.size > 0 || Boolean(submittingBug || creatingDiscussion);
     find("#issueSyncButton").textContent = sync.syncing ? "同步中…" : "同步数据";
   }
-  async function load() {
+  function observeBugNotifications(result) {
+    const parameters = new URLSearchParams({ condition_filter: JSON.stringify(conditionFilter) });
+    for (const [key, value] of Object.entries(filters).sort(([left], [right]) => left.localeCompare(right))) {
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (item !== undefined && item !== null && item !== "") parameters.append(key, item);
+      }
+    }
+    if (kind === "bugs") parameters.set("bug_stage", bugStage);
+    const scope = `${kind}?${parameters}`;
+    bugNotifications.observe(result.bug_notifications, scope, result.sync, autoSyncSettings[kind], (id) => {
+      const target = id ? new URLSearchParams({
+        created_from: parameters.get("created_from"),
+        created_to: parameters.get("created_to"),
+        q: id,
+        condition_filter: JSON.stringify({ logic: "and", rules: [] }),
+      }) : new URLSearchParams(parameters);
+      navigate(`bugs?${target}`);
+    });
+  }
+  function flushFilterSync() {
+    if (!filterSyncPending || !latestSyncStatus || latestSyncStatus.syncing || latestSyncStatus.submitting || syncRequestPending || form.inert || submittingRequirements.size || submittingBug || creatingDiscussion || root.getAttribute("aria-busy") === "true" || !root.classList.contains("active")) return;
+    if (!form.checkValidity() || filters.created_from > filters.created_to) return;
+    filterSyncPending = false;
+    syncData(false, true);
+  }
+  async function load(syncFilters = false) {
+    if (syncFilters === true) {
+      filterSyncPending = true;
+      bugNotifications.beginSync(null, false);
+    }
     clearTimeout(poll);
     const current = ++sequence;
     const selectionScope = bugSelectionKey();
@@ -388,6 +424,7 @@ window.IssueManagement = (() => {
     root.setAttribute("aria-busy", "true");
     renderBugSelection();
     renderRequirementSelection();
+    let receivedStatus = false;
     try {
       const parameters = new URLSearchParams({
         kind,
@@ -404,6 +441,7 @@ window.IssueManagement = (() => {
       const result = await request("/api/issues/data?" + parameters);
       if (current !== sequence) return;
       setStatus(result.sync);
+      receivedStatus = true;
       if (kind === "overview") overviewParameters = currentOverviewParameters();
       if (result.sync.ready) {
         if (!result.sync.stale) allowStaleCache = false;
@@ -424,11 +462,12 @@ window.IssueManagement = (() => {
         if (requirementSelectionScope !== bugSelectionKey()) selectedRequirements.clear();
         requirementSelectionScope = bugSelectionKey();
         render();
+        observeBugNotifications(result);
       } else {
         data = null;
         find("#issueContent").hidden = true;
       }
-      if ((result.sync.syncing || result.sync.submitting) && root.classList.contains("active")) poll = setTimeout(load, 1000);
+      if (result.sync.syncing || result.sync.submitting) poll = setTimeout(load, 1000);
     } catch (error) {
       if (current !== sequence) return;
       find("#issueSyncStatus").textContent = `加载失败：${error.message}`;
@@ -440,6 +479,7 @@ window.IssueManagement = (() => {
         root.setAttribute("aria-busy", "false");
         renderBugSelection();
         renderRequirementSelection();
+        if (receivedStatus) flushFilterSync();
       }
     }
   }
@@ -1025,6 +1065,8 @@ window.IssueManagement = (() => {
   }
   async function open(nextKind, parameters = new URLSearchParams()) {
     if (!(nextKind in labels)) return;
+    filterSyncPending = false;
+    latestSyncStatus = null;
     if (kind === "overview" && filters.created_from && filters.created_to) {
       overviewParameters = currentOverviewParameters();
     }
@@ -1050,6 +1092,8 @@ window.IssueManagement = (() => {
     } else await preferenceQueue;
     if (opening !== openSequence) return;
     kind = nextKind;
+    bugNotifications.reset();
+    notificationControl.hidden = kind === "requirements";
     allowStaleCache = true;
     renderAutoSyncControl();
     selectedBugId = "";
@@ -1387,7 +1431,7 @@ window.IssueManagement = (() => {
       find("#issueContent").hidden = true;
     } else savePreferences();
     page = 1;
-    load();
+    load(true);
   }
   );
   form.elements.q.addEventListener(
@@ -1404,7 +1448,7 @@ window.IssueManagement = (() => {
       searchSavePending = false;
       page = 1;
       savePreferences();
-      load();
+      load(true);
     }, 300);
   }
   );
@@ -1419,7 +1463,7 @@ window.IssueManagement = (() => {
     data = null;
     find("#issueContent").hidden = true;
     page = 1;
-    load();
+    load(true);
   }
   );
   find("#issueReset").addEventListener(
@@ -1444,7 +1488,7 @@ window.IssueManagement = (() => {
     dropdownControls.refresh();
     renderProjectOptions();
     savePreferences();
-    load();
+    load(true);
   }
   );
   find("#issuePrevious").addEventListener("click", () => {
@@ -1469,16 +1513,19 @@ window.IssueManagement = (() => {
     find("#issueFilterDialog").close();
   }
   );
-  async function syncData(automatic = false) {
+  async function syncData(automatic = false, filterChange = false) {
     if (syncRequestPending || form.inert || submittingRequirements.size || submittingBug || creatingDiscussion) return;
-    if (automatic && (!root.classList.contains("active") || find("#issueSyncButton").disabled || root.getAttribute("aria-busy") === "true")) return;
+    if (automatic && (find("#issueSyncButton").disabled || root.getAttribute("aria-busy") === "true")) return;
     if (!form.checkValidity() || filters.created_from > filters.created_to) {
       if (automatic) return;
       if (!find("#issueFilterDialog").open) find("#issueFilterDialog").showModal();
       form.reportValidity();
       return load();
     }
-    const current = sequence;
+    const current = sequence,
+      opening = openSequence;
+    let syncRequested = false;
+    bugNotifications.beginSync(null, false);
     syncRequestPending = true;
     find("#issueSyncButton").disabled = true;
     try {
@@ -1493,7 +1540,10 @@ window.IssueManagement = (() => {
         method: "POST"
       }
       );
+      syncRequested = true;
+      if (filterChange && opening === openSequence && !result.sync_id) filterSyncPending = true;
       if (current !== sequence) return;
+      bugNotifications.beginSync(result.sync_id, automatic);
       setStatus(result);
       await load();
     } catch (error) {
@@ -1503,6 +1553,7 @@ window.IssueManagement = (() => {
       find("#issueSyncButton").disabled = false;
     } finally {
       syncRequestPending = false;
+      if (syncRequested && opening === openSequence) flushFilterSync();
     }
   }
   find("#issueSyncButton").addEventListener("click", () => syncData());
@@ -1660,7 +1711,7 @@ window.IssueManagement = (() => {
       page = 1;
       selectedBugId = "";
       find("#issueBugActionStatus").textContent = "";
-      return load();
+      return load(true);
     }
     if (button.hasAttribute("data-toggle-requirement")) {
       const id = button.dataset.toggleRequirement;
@@ -1681,7 +1732,7 @@ window.IssueManagement = (() => {
       [...find("#issueProjectChoices").querySelectorAll("button")].find(option => option.dataset.requirementProject === project)?.focus();
       find("#issueContent").hidden = true;
       page = 1;
-      return load();
+      return load(true);
     }
     if (button.hasAttribute("data-requirement-project-tab")) {
       if (submittingRequirements.size || creatingDiscussion) return;
@@ -1691,7 +1742,7 @@ window.IssueManagement = (() => {
       renderProjectTabs();
       page = 1;
       find("#issueContent").hidden = true;
-      return load();
+      return load(true);
     }
     if (button.hasAttribute("data-dashboard-scope")) {
       jump(
