@@ -40,6 +40,36 @@ def week_bounds(today):
     return start, start + timedelta(days=6)
 
 
+def release_calendar(requirements, today):
+    start, end = week_bounds(today)
+    releases = {}
+    for row in requirements:
+        release_date = calendar_date(row.get("release_date"))
+        if release_date is None or not start <= release_date <= end:
+            continue
+        projects = tuple(row.get("project") or [])
+        versions = tuple(row.get("version") or [])
+        counts = releases.setdefault(release_date, Counter())
+        counts[(projects, versions)] += 1
+    return [
+        {
+            "date": (day := start + timedelta(days=offset)).isoformat(),
+            "today": day == today,
+            "releases": [
+                {
+                    "project": "、".join(projects) or "未分配项目",
+                    "version": "、".join(versions) or "未设置版本",
+                    "projects": list(projects),
+                    "versions": list(versions),
+                    "count": count,
+                }
+                for (projects, versions), count in sorted(releases.get(day, {}).items())
+            ],
+        }
+        for offset in range(7)
+    ]
+
+
 def is_pending_requirement(row, pre_test_statuses):
     status = str(row.get("status") or "").strip()
     return not status or status in pre_test_statuses
@@ -101,7 +131,15 @@ def matches_dashboard(
 
 
 def summarize(
-    requirements, bugs, today, pre_test_statuses, submitted_statuses, terminal_bug_statuses
+    requirements,
+    bugs,
+    today,
+    pre_test_statuses,
+    submitted_statuses,
+    terminal_bug_statuses,
+    *,
+    release_requirements,
+    release_dates_ready,
 ):
     start, end = week_bounds(today)
     pending = [row for row in requirements if is_pending_requirement(row, pre_test_statuses)]
@@ -163,6 +201,8 @@ def summarize(
             "overdue": buckets["overdue"],
         },
         "calendar": calendar,
+        "release_calendar": release_calendar(release_requirements if release_dates_ready else [], today),
+        "release_dates_ready": release_dates_ready,
         "deadline_buckets": dict(buckets),
         "dated_pending": len(dated),
         "undated_pending": len(pending) - len(dated),

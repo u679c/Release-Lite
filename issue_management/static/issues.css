@@ -431,20 +431,10 @@
   text-align: left;
   color: inherit;
 }
-.issue-dashboard-metric[data-tone="yellow"] {
-  --metric-color: #ffbe27;
-  background: linear-gradient(120deg, #fffbf1, #fffaf0);
-  border-color: #f0ece1;
-}
 .issue-dashboard-metric[data-tone="blue"] {
   --metric-color: #246bfe;
   background: linear-gradient(120deg, #f0f6ff, #f1f6ff);
   border-color: #e2eafa;
-}
-.issue-dashboard-metric[data-tone="purple"] {
-  --metric-color: #9256ff;
-  background: linear-gradient(120deg, #f7f3ff, #f6f3ff);
-  border-color: #ebe3fc;
 }
 .issue-dashboard-metric:hover {
   border-color: var(--metric-color);
@@ -505,6 +495,113 @@
   bottom: 23px;
   color: #91a0b9;
   font-size: 19px;
+}
+.issue-dashboard-release {
+  grid-column: span 2;
+  min-width: 0;
+  padding: 17px 18px;
+  border: 1px solid #e2eafa;
+  border-radius: 12px;
+  background: linear-gradient(130deg, #fff, #f7faff);
+  box-shadow: 0 2px 5px #263d6804;
+}
+.issue-dashboard-release-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px 12px;
+}
+.issue-dashboard .issue-dashboard-release-header h3 {
+  font-size: 14px;
+  font-weight: 650;
+}
+.issue-dashboard-release-header i {
+  margin-right: 4px;
+  color: #246bfe;
+}
+.issue-dashboard-release-header > span, .issue-dashboard-release-summary {
+  color: #8793a9;
+  font-size: 11px;
+}
+.issue-dashboard-release-summary {
+  margin: 5px 0 12px;
+}
+.issue-dashboard-release-scroll {
+  overflow-x: auto;
+}
+.issue-dashboard-release-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 350px;
+}
+.issue-dashboard-release-day {
+  min-width: 0;
+  padding: 8px 4px 6px;
+  border-radius: 7px;
+  background: #f2f5fa;
+  text-align: center;
+}
+.issue-dashboard-release-weekday, .issue-dashboard-release-day time {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+}
+.issue-dashboard-release-weekday {
+  color: #8793a9;
+}
+.issue-dashboard-release-day time {
+  margin-top: 2px;
+  color: #3e4a61;
+  font-weight: 650;
+}
+.issue-dashboard-release-day.is-today {
+  background: #e3ecff;
+}
+.issue-dashboard-release-day.is-today time, .issue-dashboard-release-day.is-today .issue-dashboard-release-weekday {
+  color: #246bfe;
+}
+.issue-dashboard-release-events {
+  display: grid;
+  gap: 5px;
+  margin-top: 7px;
+}
+.issue-dashboard-release-event {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 2px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--release-event-background);
+  color: var(--release-event-color);
+  text-align: center;
+  cursor: pointer;
+}
+.issue-dashboard-release-event:hover {
+  border-color: currentColor;
+}
+.issue-dashboard-release-event b, .issue-dashboard-release-event small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.issue-dashboard-release-event b {
+  font-weight: 600;
+}
+.issue-dashboard-release-event:focus-visible {
+  outline: 2px solid #246bfe;
+  outline-offset: 2px;
+}
+.issue-dashboard-release-empty {
+  padding: 4px 0;
+  color: #b6c0d0;
+  font-size: 12px;
 }
 .issue-dashboard-main {
   display: grid;
@@ -933,6 +1030,9 @@
   }
   .issue-dashboard-panel {
     padding: 18px 14px;
+  }
+  .issue-dashboard-release {
+    padding: 16px 12px;
   }
   .issue-dashboard-metric {
     min-height: 145px;

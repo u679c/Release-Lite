@@ -1744,6 +1744,15 @@ window.IssueManagement = (() => {
       find("#issueContent").hidden = true;
       return load(true);
     }
+    if (button.hasAttribute("data-release-projects")) {
+      const projects = JSON.parse(button.dataset.releaseProjects);
+      const versions = JSON.parse(button.dataset.releaseVersions);
+      jump("requirements", {
+        project: projects.length ? projects : ["__empty__"],
+        version: versions.length ? versions : ["__empty__"]
+      }, true);
+      return;
+    }
     if (button.hasAttribute("data-dashboard-scope")) {
       jump(
           "requirements",

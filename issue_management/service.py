@@ -19,7 +19,7 @@ from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from .conditions import is_high_priority, matches_conditions, normalize_conditions
-from .dashboard import DASHBOARD_SCOPES, calendar_date, matches_dashboard, summarize
+from .dashboard import DASHBOARD_SCOPES, calendar_date, matches_dashboard, summarize, week_bounds
 from .hierarchy import requirement_groups
 from .home import home_summary
 from .preferences import requirement_sort
@@ -34,6 +34,7 @@ EMPTY = "__empty__"
 PAGE_SIZE = 30
 VERSION_PAGE_SIZE = 10
 SNAPSHOT_SCHEMA = 8
+RELEASE_CALENDAR_SCHEMA = 1
 PARENT_FIELDS = {
     "parent_1": "fldTtcEaOw",
     "parent_3": "fldmBm8Fca",
@@ -97,6 +98,7 @@ TABLES = {
             "products": "fld1y1zdvt",
             "designers": "fldxEALysv",
             "test_deadline": "fldq4s2d06",
+            "release_date": "fld6zM5DDR",
             "testers": "fldjfXdcNL",
             "created_at": "fldrfNv4jd",
             "start_at": "fldPYlF2n8",
@@ -458,8 +460,14 @@ class IssueService:
         record_filter=None,
         record_ids=None,
         artifact_prefix="",
+        field_names=None,
     ):
         config = TABLES[kind]
+        fields = (
+            config["fields"]
+            if field_names is None
+            else {name: config["fields"][name] for name in field_names}
+        )
         if date_range is not None and kind in ("requirements", "bugs"):
             # Date comparisons are strict in Base; include both selected calendar days.
             before_start = date.fromisoformat(date_range["created_from"]) - timedelta(days=1)
@@ -493,7 +501,7 @@ class IssueService:
             ]
             for record_id in record_ids or []:
                 arguments.extend(["--record-id", record_id])
-            for field_id in config["fields"].values():
+            for field_id in fields.values():
                 arguments.extend(["--field-id", field_id])
             # Query parameters only: never modify the Feishu records or saved view filters.
             if record_filter is not None:
@@ -508,7 +516,7 @@ class IssueService:
             columns = {
                 column.get("field_id"): name for name, column in manifest.get("columns", {}).items()
             }
-            missing = set(config["fields"].values()) - set(columns)
+            missing = set(fields.values()) - set(columns)
             if missing and manifest.get("records_count") != 0:
                 raise SyncError(
                     "飞书表配置有变化，请联系管理员检查"
@@ -523,7 +531,7 @@ class IssueService:
                                 "id": raw["record_id"],
                                 **{
                                     key: raw.get(columns[field])
-                                    for key, field in config["fields"].items()
+                                    for key, field in fields.items()
                                 },
                             }
                         )
@@ -539,6 +547,23 @@ class IssueService:
         if len({row["id"] for row in records}) != len(records):
             raise SyncError("飞书数据读取异常，请重新同步")
         return records
+
+    def _read_release_requirements(self, directory, start, end):
+        # The release date is a lookup field. ExactDate comparisons on it can
+        # return no records, so read the projected table and compare dates locally.
+        rows = self._read_table(
+            "requirements",
+            directory,
+            None,
+            artifact_prefix="release-",
+            field_names=("project", "version", "release_date"),
+        )
+        return [
+            row
+            for row in rows
+            if (release_date := calendar_date(row.get("release_date"))) is not None
+            and start <= release_date <= end
+        ]
 
     @staticmethod
     def _parent_ids(row):
@@ -1176,6 +1201,7 @@ class IssueService:
         try:
             targets = self._sync_targets(kind)
             table_names = (*targets, "projects", "versions") if "bugs" in targets else targets
+            release_start, release_end = week_bounds(datetime.now(SHANGHAI).date())
             with tempfile.TemporaryDirectory(prefix="release-lite-issues-") as directory:
                 # Independent reads share one bounded pool; each table still paginates in order.
                 with ThreadPoolExecutor(max_workers=4, thread_name_prefix="issue-read") as executor:
@@ -1185,6 +1211,13 @@ class IssueService:
                     }
                     context = []
                     if "requirements" in targets:
+                        # Read releases independently of the page's creation range and filters.
+                        futures["release_requirements"] = executor.submit(
+                            self._read_release_requirements,
+                            directory,
+                            release_start,
+                            release_end,
+                        )
                         requirements = futures["requirements"].result()
                         read_context = (
                             self._read_requirement_context
@@ -1223,6 +1256,9 @@ class IssueService:
                     },
                 }
                 if "requirements" in targets:
+                    snapshot["release_requirements"] = tables["release_requirements"]
+                    snapshot["release_week_start"] = release_start.isoformat()
+                    snapshot["release_calendar_schema"] = RELEASE_CALENDAR_SCHEMA
                     snapshot["requirement_context"] = [
                         self._normalize("requirements", row, projects, versions) for row in context
                     ]
@@ -1793,6 +1829,13 @@ class IssueService:
                 REQUIREMENT_PRE_TEST_STATUSES,
                 TEST_DEADLINE_EXEMPT_STATUSES - {"已取消", "无需测试"},
                 TERMINAL["bugs"],
+                release_requirements=snapshot.get("release_requirements", []),
+                release_dates_ready=(
+                    snapshot.get("release_calendar_schema") == RELEASE_CALENDAR_SCHEMA
+                    and isinstance(snapshot.get("release_requirements"), list)
+                    and snapshot.get("release_week_start")
+                    == week_bounds(date.fromisoformat(today))[0].isoformat()
+                ),
             )
             if kind == "overview"
             else None,

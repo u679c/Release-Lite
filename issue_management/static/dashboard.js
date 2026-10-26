@@ -1,5 +1,25 @@
 window.IssueDashboard = (() => {
   const escape = ReleaseLite.escapeHtml;
+  const releaseProjectColors = new Map();
+  const releaseColorPalette = [
+    ["#e8efff", "#2959b8"],
+    ["#f1eaff", "#7840bb"],
+    ["#fff0df", "#a45a12"],
+    ["#fce7f0", "#ae366c"],
+    ["#e1f4f5", "#167780"],
+    ["#ffe9e6", "#b94639"],
+    ["#e9e8ff", "#5447b0"],
+    ["#edf3df", "#5c761d"],
+  ];
+  let unusedReleaseColors = [...releaseColorPalette];
+  function releaseProjectColor(project) {
+    if (!releaseProjectColors.has(project)) {
+      if (!unusedReleaseColors.length) unusedReleaseColors = [...releaseColorPalette];
+      const index = Math.floor(Math.random() * unusedReleaseColors.length);
+      releaseProjectColors.set(project, unusedReleaseColors.splice(index, 1)[0]);
+    }
+    return releaseProjectColors.get(project);
+  }
   const colors = {
     overdue: "#ff595f",
     soon: "#ffc334",
@@ -155,6 +175,35 @@ window.IssueDashboard = (() => {
       `</button>`
     );
   }
+  function releaseEvent(release, date) {
+    const [background, color] = releaseProjectColor(release.project);
+    const description = `${date} · ${release.project} ${release.version} · ${release.count} 个需求，点击查看需求列表`;
+    return `<button type="button" class="issue-dashboard-release-event" data-release-projects="${escape(JSON.stringify(release.projects))}" data-release-versions="${escape(JSON.stringify(release.versions))}" style="--release-event-background:${background};--release-event-color:${color}" title="${escape(description)}" aria-label="${escape(description)}"><b>${escape(release.project)}</b><small>${escape(release.version)}</small></button>`;
+  }
+  function releaseCalendar(data) {
+    const days = data.release_calendar;
+    const total = days.reduce((sum, day) => sum + day.releases.length, 0);
+    const status = data.release_dates_ready
+      ? (total ? `${total} 个发布安排` : "本周暂无发布安排")
+      : "请同步数据以获取本周发布安排";
+    return (
+      `<section class="issue-dashboard-release" aria-labelledby="issueReleaseCalendarTitle">` +
+      `<header class="issue-dashboard-release-header"><h3 id="issueReleaseCalendarTitle"><i class="bi bi-calendar-week" aria-hidden="true"></i> 本周发布日历</h3>` +
+      `<span>${escape(data.week_start.slice(5))} ~ ${escape(data.week_end.slice(5))}</span></header>` +
+      `<p class="issue-dashboard-release-summary">${status}</p>` +
+      `<div class="issue-dashboard-release-scroll"><div class="issue-dashboard-release-days">` +
+      days.map((day, index) => (
+        `<div class="issue-dashboard-release-day${day.today ? " is-today" : ""}">` +
+        `<span class="issue-dashboard-release-weekday">周${"一二三四五六日"[index]}</span>` +
+        `<time datetime="${escape(day.date)}"${day.today ? ' aria-current="date"' : ""}>${escape(day.date.slice(5))}</time>` +
+        `<div class="issue-dashboard-release-events">${day.releases.length
+          ? day.releases.map((release) => releaseEvent(release, day.date)).join("")
+          : '<span class="issue-dashboard-release-empty" aria-label="暂无发布安排">—</span>'}</div>` +
+        `</div>`
+      )).join("") +
+      `</div></div></section>`
+    );
+  }
   function projectRiskRow(project, projectMaximum) {
     return (
       `<button type="button" class="issue-dashboard-project-row" data-dashboard-scope="pending" data-dashboard-project="${escape(project.name || "__empty__")}" title="查看${escape(project.name || "未分配项目")}待提测需求">` +
@@ -177,9 +226,8 @@ window.IssueDashboard = (() => {
         "bar-chart-fill",
         "weekly_pending",
       ),
-      metric("3 天内待提测", metrics.soon, "", "yellow", "clock-fill", "clock-fill", "soon"),
       metric("今日待提测", metrics.today, "", "blue", "calendar3", "calendar3", "today"),
-      metric("逾期未提测", metrics.overdue, "", "purple", "file-earmark-text-fill", "exclamation-circle-fill", "overdue"),
+      releaseCalendar(data),
     ].join("");
     find("#issueDashboardWeekRange").textContent = `${data.week_start} ~ ${data.week_end}`;
     const maximum = Math.max(1, ...data.calendar.map((day) => day.count));
