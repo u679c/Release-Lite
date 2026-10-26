@@ -16,12 +16,10 @@ CONDITION_FIELDS = {
 
 
 def is_high_priority(row):
-    return row.get("priority") in (
-        {"P0", "P1"} if row["kind"] == "requirements" else {"紧急", "高"}
-    )
+    return row["kind"] == "bugs" and row.get("priority") in {"紧急", "高"}
 
 
-def normalize_conditions(payload):
+def normalize_conditions(payload, *, kind=None):
     if isinstance(payload, str):
         try:
             payload = json.loads(payload)
@@ -46,6 +44,10 @@ def normalize_conditions(payload):
         values = rule.get("values", [])
         if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
             raise ValueError("筛选值格式无效")
+        if kind == "requirements" and rule["field"] == "scope":
+            values = [value for value in values if value not in ("urgent", "urgent_overdue")]
+            if not values:
+                continue
         normalized.append(
             {
                 "field": rule["field"],

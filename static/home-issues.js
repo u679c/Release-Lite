@@ -27,7 +27,7 @@ window.HomeIssues = (() => {
 
   function queueRow(data, row, kind) {
     const title = row.title.replace(/^\[([\s\S]*)\]\(https?:\/\/[^\s]+\)$/, "$1");
-    const priority = row.priority || "未设置";
+    const priority = row.priority || "";
     const project = row.project.join(" / ") || "未分配项目";
     const deadline = row.deadline
       ? `${kind === "requirements" ? "提测" : "截止"} ${row.deadline}` : "未安排日期";
@@ -38,7 +38,7 @@ window.HomeIssues = (() => {
         <small title="${escape(project)}">${escape(project)}<span> · ${escape(deadline)}</span></small>
       </span>
       <span class="home-issues-row-tags">
-        <span class="home-issue-priority" data-priority="${escape(priority)}">${escape(priority)}</span>
+        ${priority ? `<span class="home-issue-priority" data-priority="${escape(priority)}" ${kind === "requirements" ? `data-requirement-priority style="${ReleaseLite.priorityStyle(row.priority_color)}"` : ""}>${escape(priority)}</span>` : ""}
         <span class="home-issues-state">${escape(row.status || "状态未填")}</span>
       </span>
     </a>`;

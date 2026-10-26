@@ -150,21 +150,25 @@
   font-size: 10px;
   font-weight: 650;
 }
-.home-issue-priority[data-priority="P0"], .home-issue-priority[data-priority="紧急"] {
+.home-issue-priority:not([data-requirement-priority]):is([data-priority="P0"], [data-priority="紧急"]) {
   background: #fee4e2;
   color: #b42318;
 }
-.home-issue-priority[data-priority="P1"], .home-issue-priority[data-priority="高"] {
+.home-issue-priority:not([data-requirement-priority]):is([data-priority="P1"], [data-priority="高"]) {
   background: #ffedce;
   color: #b54708;
 }
-.home-issue-priority[data-priority="P2"], .home-issue-priority[data-priority="中"] {
+.home-issue-priority:not([data-requirement-priority]):is([data-priority="P2"], [data-priority="中"]) {
   background: #e5efff;
   color: #175cd3;
 }
-.home-issue-priority[data-priority="P3"], .home-issue-priority[data-priority="低"] {
+.home-issue-priority:not([data-requirement-priority]):is([data-priority="P3"], [data-priority="低"]) {
   background: #dcfae6;
   color: #027a48;
+}
+.home-issue-priority[data-requirement-priority] {
+  color: var(--issue-priority-ink);
+  background: var(--issue-priority-bg);
 }
 .home-issues-state {
   color: #8793a6;

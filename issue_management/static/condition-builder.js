@@ -21,9 +21,9 @@ window.IssueConditionBuilder = {
       if (field === "hierarchy") return [["main", "主需求"], ["child", "子需求"]];
       if (field === "scope") return [
         ["pending", "未结项"],
-        ["urgent", kind === "requirements" ? "P0 / P1 未结项" : "高优先级未结项"],
+        ...(kind === "requirements" ? [] : [["urgent", kind === "overview" ? "高优先级 Bug 未结项" : "高优先级未结项"]]),
         ["overdue", "已逾期未结项"],
-        ["urgent_overdue", kind === "requirements" ? "P0 / P1 且逾期" : "高优先级且逾期"]
+        ...(kind === "requirements" ? [] : [["urgent_overdue", kind === "overview" ? "高优先级 Bug 且逾期" : "高优先级且逾期"]])
       ];
       return [
         ["__empty__", "未填写"],

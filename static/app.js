@@ -105,6 +105,7 @@ const pageTabLabels = new Map([
   ["tmux", "Tmux 管理"],
   ["storage", "日志管理"],
   ["operations", "操作记录"],
+  ["settings", "设置"],
 ]);
 const openedPageTabs = new Map();
 function updatePageTabs(page, route) {
@@ -206,7 +207,7 @@ async function applyRoute() {
     activatePage("issues");
     return IssueManagement.open(page === "issues" ? "overview" : page, parameters);
   }
-  if (page !== "detail") return activatePage(["overview", "projects", "operations", "tmux", "storage"].includes(page) ? page : "overview");
+  if (page !== "detail") return activatePage(["overview", "projects", "operations", "tmux", "storage", "settings"].includes(page) ? page : "overview");
   const id = parts[1];
   const tab = ["info", "config", "logs", "terminal"].includes(parts[2]) ? parts[2] : "info";
   if (id === "new") return openEditor(null, true);

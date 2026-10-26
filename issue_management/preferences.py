@@ -108,8 +108,10 @@ def auto_sync_settings(saved):
 
 def preference_response(saved, kind):
     settings = auto_sync_settings(saved)
+    preferences = normalize_preferences(saved.get(kind, {}))
+    preferences["condition_filter"] = normalize_conditions(preferences["condition_filter"], kind=kind)
     return {
-        **normalize_preferences(saved.get(kind, {})),
+        **preferences,
         "auto_sync": settings[kind],
         "auto_sync_states": settings,
         "auto_sync_indeterminate": kind == "overview"

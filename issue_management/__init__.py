@@ -87,6 +87,23 @@ def issue_sync():
     return jsonify({**service.status(date_range, include_family, kind), "sync_id": sync_id})
 
 
+@blueprint.route("/api/issues/requirement-priorities", methods=["GET", "PUT"])
+def requirement_priority_configuration():
+    service = current_app.extensions["issue_management"]
+    if request.method == "GET":
+        result = service.requirement_priority_configuration()
+    else:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify(error="优先级配置格式不正确"), 400
+        result = service.configure_requirement_priorities(
+            payload.get("levels"), payload.get("revision")
+        )
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @blueprint.put("/api/issues/requirements/<record_id>/priority")
 def update_requirement_priority(record_id):
     payload = request.get_json(silent=True)

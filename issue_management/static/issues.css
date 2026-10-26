@@ -1313,26 +1313,6 @@
   background-color: var(--issue-priority-bg, #f2f4f7);
   font-weight: 600;
 }
-.issue-module [data-priority="P0"] {
-  --issue-priority-ink: #b42318;
-  --issue-priority-bg: #fee4e2;
-}
-.issue-module [data-priority="P1"] {
-  --issue-priority-ink: #b54708;
-  --issue-priority-bg: #ffedce;
-}
-.issue-module [data-priority="P2"] {
-  --issue-priority-ink: #175cd3;
-  --issue-priority-bg: #e5efff;
-}
-.issue-module [data-priority="P3"] {
-  --issue-priority-ink: #027a48;
-  --issue-priority-bg: #dcfae6;
-}
-.issue-module [data-priority=""] {
-  --issue-priority-ink: #667085;
-  --issue-priority-bg: #f2f4f7;
-}
 .issue-status-tag {
   display: inline-flex;
   align-items: center;

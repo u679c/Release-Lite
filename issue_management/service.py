@@ -1363,8 +1363,20 @@ class IssueService:
         except OSError as exc:
             raise SyncError("优先级保存失败，请稍后重试") from exc
 
+    def requirement_priority_configuration(self):
+        try:
+            return self.requirement_priorities.configuration()
+        except OSError as exc:
+            raise SyncError("优先级配置读取失败，请稍后重试") from exc
+
+    def configure_requirement_priorities(self, levels, expected_revision):
+        try:
+            return self.requirement_priorities.configure(levels, expected_revision)
+        except OSError as exc:
+            raise SyncError("优先级配置保存失败，请稍后重试") from exc
+
     def _filter_query_records(
-        self, selected, filters, today, condition_filter, dashboard_scope, test_date
+        self, selected, filters, today, condition_filter, dashboard_scope, test_date, *, kind=None
     ):
         projects = (
             filters.getlist("project")
@@ -1418,6 +1430,8 @@ class IssueService:
                 row for row in selected if query in (row["title"] + " " + row["id"]).casefold()
             ]
         scope = filters.get("scope", "")
+        if kind == "requirements" and scope in ("urgent", "urgent_overdue"):
+            scope = ""
         if scope:
             selected = [
                 row
@@ -1446,7 +1460,7 @@ class IssueService:
             ]
         return selected
 
-    def _query_options(self, option_rows, kind):
+    def _query_options(self, option_rows, kind, requirement_priorities):
         options = {
             key: sorted(
                 {
@@ -1462,10 +1476,10 @@ class IssueService:
             for key in ("project", "version", "status", "priority", "environment")
         }
         if kind == "requirements":
-            options["priority"] = list(REQUIREMENT_PRIORITIES)
+            options["priority"] = requirement_priorities
         elif kind == "overview":
-            options["priority"] = list(REQUIREMENT_PRIORITIES) + [
-                value for value in options["priority"] if value not in REQUIREMENT_PRIORITIES
+            options["priority"] = requirement_priorities + [
+                value for value in options["priority"] if value not in requirement_priorities
             ]
         people = {
             person["id"]: person.get("name") or person["id"]
@@ -1479,7 +1493,7 @@ class IssueService:
         return options
 
     @staticmethod
-    def _group_requirement_records(records, requirement_tree, sort_by, sort_order):
+    def _group_requirement_records(records, requirement_tree, sort_by, sort_order, priorities):
         record_index = {row["id"]: row for row in records}
         versions = {}
         for group in requirement_tree:
@@ -1511,7 +1525,7 @@ class IssueService:
         if sort_by == "priority":
             assigned = [bucket for bucket in ordered_versions if bucket["key"] != "priority:"]
             assigned.sort(
-                key=lambda bucket: REQUIREMENT_PRIORITIES.index(bucket["name"]),
+                key=lambda bucket: priorities.index(bucket["name"]),
                 reverse=sort_order == "desc",
             )
             ordered_versions = assigned + [
@@ -1581,17 +1595,26 @@ class IssueService:
 
     def _with_local_priorities(self, snapshot):
         try:
-            local_priorities = self.requirement_priorities.priorities(
+            priority_state = self.requirement_priorities.state(
                 snapshot["requirements"] + snapshot.get("requirement_context", [])
             )
         except OSError as exc:
             raise SyncError("优先级加载失败，请稍后重试") from exc
+        local_priorities = priority_state["priorities"]
+        levels = [level["name"] for level in priority_state["configuration"]["levels"]]
+        colors = {level["name"]: level["color"] for level in priority_state["configuration"]["levels"]}
         # Keep remote snapshots untouched: requirement priorities exist only locally.
         snapshot = {
             **snapshot,
+            "requirement_priorities": levels,
+            "requirement_priority_colors": colors,
             **{
                 target: [
-                    dict(row, priority=local_priorities.get(row["id"], ""))
+                    dict(
+                        row,
+                        priority=local_priorities.get(row["id"], ""),
+                        priority_color=colors.get(local_priorities.get(row["id"], "")),
+                    )
                     for row in snapshot.get(target, [])
                 ]
                 for target in ("requirements", "requirement_context")
@@ -1673,7 +1696,7 @@ class IssueService:
     def query(self, kind, filters, page):
         date_range = parse_date_range(filters)
         sort_by, sort_order = requirement_sort(filters)
-        condition_filter = normalize_conditions(filters.get("condition_filter"))
+        condition_filter = normalize_conditions(filters.get("condition_filter"), kind=kind)
         dashboard_scope = filters.get("dashboard_scope", "")
         if dashboard_scope and dashboard_scope not in DASHBOARD_SCOPES:
             raise ValueError("提测筛选范围无效")
@@ -1720,7 +1743,7 @@ class IssueService:
             for row in selected
         ]
         selected = self._filter_query_records(
-            selected, filters, today, condition_filter, dashboard_scope, test_date
+            selected, filters, today, condition_filter, dashboard_scope, test_date, kind=kind
         )
         bug_stages = {}
         if kind == "bugs":
@@ -1759,7 +1782,7 @@ class IssueService:
             return [{"name": name, "count": count} for name, count in counter.most_common()]
 
         option_rows = all_rows if kind == "overview" else snapshot[kind]
-        options = self._query_options(option_rows, kind)
+        options = self._query_options(option_rows, kind, snapshot["requirement_priorities"])
         selected.sort(key=lambda row: (row.get("created_at") or "", row["id"]), reverse=True)
         matched_total = len(selected)
         total_groups = None
@@ -1778,7 +1801,7 @@ class IssueService:
             total_groups = len(requirement_tree)
             total = sum(len(group) for group in requirement_tree)
             ordered_versions = self._group_requirement_records(
-                records, requirement_tree, sort_by, sort_order
+                records, requirement_tree, sort_by, sort_order, snapshot["requirement_priorities"]
             )
             total_versions = len(ordered_versions)
             page_size = VERSION_PAGE_SIZE
@@ -1846,7 +1869,8 @@ class IssueService:
             "total_versions": total_versions,
             "sort_by": sort_by,
             "sort_order": sort_order,
-            "requirement_priorities": list(REQUIREMENT_PRIORITIES),
+            "requirement_priorities": snapshot["requirement_priorities"],
+            "requirement_priority_colors": snapshot["requirement_priority_colors"],
             "page": page,
             "page_size": page_size,
             "page_count": page_count,

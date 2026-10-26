@@ -209,7 +209,8 @@ window.IssueManagement = (() => {
   const names = people => (people || []).map(person => person.name || person.id).join("、");
   const list = values => values?.length ? values.join("、") : "";
   const badge = (value, tone = "") => value ? `<span class="issue-badge ${tone}">${escape(value)}</span>` : "";
-  const priorityBadge = (value, label = value || "未设置") => `<span class="issue-badge issue-priority-tag" data-priority="${escape(value || "")}">${escape(label)}</span>`;
+  const priorityStyle = value => ReleaseLite.priorityStyle(data?.requirement_priority_colors?.[value]);
+  const priorityBadge = (value, label = value) => value ? `<span class="issue-badge issue-priority-tag" data-priority="${escape(value)}" style="${priorityStyle(value)}">${escape(label)}</span>` : "";
   const statusTag = value => value ? `<span class="issue-status-tag" data-status="${escape(value)}">${escape(value)}</span>` : "";
   const testDeadline = row => row.test_deadline ? `<span class="issue-test-deadline" data-tone="${escape(row.test_deadline_tone || "")}">${date(row.test_deadline)}</span>` : "";
   function recordTitle(row) {
@@ -639,7 +640,7 @@ window.IssueManagement = (() => {
   }
   function requirementGroupHtml(group, rowsByVersion) {
     const count = `共 ${group.matched_total} 条`;
-    const groupName = filters.sort_by === "priority" ? priorityBadge(group.key.slice("priority:".length), group.name) : escape(group.name);
+    const groupName = filters.sort_by === "priority" ? priorityBadge(group.key.slice("priority:".length), group.name) || escape(group.name) : escape(group.name);
     return `<details class="issue-version-group" data-version-group="${escape(group.key)}" ${collapsedVersions.has(group.key) ? "" : "open"}>` +
       `<summary>` +
       `<input class="issue-requirement-checkbox issue-version-checkbox" type="checkbox" data-version-check="${escape(group.key)}" aria-label="选择该分组全部需求：${escape(group.name)}">` +
@@ -1157,6 +1158,14 @@ window.IssueManagement = (() => {
       };
       conditionFilter = saved.condition_filter;
       if (kind === "requirements") {
+        conditionFilter = {
+          ...conditionFilter,
+          rules: conditionFilter.rules.map(rule => rule.field === "scope" ? {
+            ...rule,
+            values: rule.values.filter(value => !["urgent", "urgent_overdue"].includes(value))
+          } : rule).filter(rule => rule.values.length)
+        };
+        if (["urgent", "urgent_overdue"].includes(filters.scope)) delete filters.scope;
         if (usingUrlFilters && filters.include_family === undefined) {
           filters.include_family = preferences?.filters?.include_family || "0";
         }
@@ -1260,7 +1269,7 @@ window.IssueManagement = (() => {
     const options = ["", ...(data.requirement_priorities || [])].map(priority => {
       const value = escape(priority);
       const selected = priority === currentPriority ? "selected" : "";
-      return `<option value="${value}" data-priority="${value}" ${selected}>${escape(priority || "未设置")}</option>`;
+      return `<option value="${value}" data-priority="${value}" style="${priorityStyle(priority)}" ${selected}>${escape(priority || "未设置")}</option>`;
     }).join("");
     return `<div class="issue-priority-editor">
       <select
@@ -1268,6 +1277,7 @@ window.IssueManagement = (() => {
         class="form-select form-select-sm"
         data-record-id="${escape(row.id)}"
         data-priority="${escape(currentPriority)}"
+        style="${priorityStyle(currentPriority)}"
         aria-label="设置需求优先级，选择后自动保存"
         ${savingRequirementPriority ? "disabled" : ""}
       >${options}</select>
@@ -1344,6 +1354,7 @@ window.IssueManagement = (() => {
       if (currentSelect && family.has(currentSelect.dataset.recordId)) {
         currentSelect.value = result.priority;
         currentSelect.dataset.priority = result.priority;
+        currentSelect.style.cssText = priorityStyle(result.priority);
       }
       selectedRequirements.clear();
       // showStatus("优先级已保存，父子需求已同步更新。");
@@ -1353,6 +1364,7 @@ window.IssueManagement = (() => {
       if (opening === openSequence && currentSelect?.dataset.recordId === recordId) {
         currentSelect.value = previousPriority;
         currentSelect.dataset.priority = previousPriority;
+        currentSelect.style.cssText = priorityStyle(previousPriority);
       }
       showStatus(`保存失败：${error.message}`, true);
     } finally {
@@ -1618,6 +1630,7 @@ window.IssueManagement = (() => {
     event => {
     if (event.target.matches("#issueRequirementPriority")) {
       event.target.dataset.priority = event.target.value;
+      event.target.style.cssText = priorityStyle(event.target.value);
       saveRequirementPriority(event.target.dataset.recordId);
       return;
     }

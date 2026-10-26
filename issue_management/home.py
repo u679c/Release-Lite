@@ -38,7 +38,10 @@ def home_summary(
         row for row in snapshot.get("bugs", []) if needs_bug_attention(row, terminal_bug_statuses)
     ]
     deadlines = [calendar_date(row.get("test_deadline")) for row in requirements]
-    requirement_ranks = {name: index for index, name in enumerate(("P0", "P1", "P2", "P3"))}
+    requirement_ranks = {
+        name: index
+        for index, name in enumerate(snapshot.get("requirement_priorities", ("P0", "P1", "P2", "P3")))
+    }
     bug_ranks = {name: index for index, name in enumerate(("紧急", "高", "中", "低"))}
     parents = parent_requirements(
         requirements,
@@ -63,6 +66,7 @@ def home_summary(
                 "match_id": row.get("match_id", row["id"]),
                 "title": row.get("title") or "无标题",
                 "priority": row.get("priority") or "",
+                "priority_color": row.get("priority_color"),
                 "status": row.get("status") or "",
                 "project": row.get("project") or [],
                 "deadline": (

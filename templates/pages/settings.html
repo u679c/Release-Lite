@@ -1,0 +1,24 @@
+<section class="page-view" id="settings-page" aria-label="设置">
+  <div class="section-heading page-heading"><h2>设置</h2></div>
+  <section class="content-card settings-card">
+    <button class="btn btn-outline-primary" id="openRequirementPriorities" type="button">
+      <i class="bi bi-list-ol" aria-hidden="true"></i> 需求优先级
+    </button>
+  </section>
+  <dialog class="priority-settings-dialog" id="requirementPrioritiesDialog" aria-labelledby="requirementPrioritiesTitle" aria-describedby="requirementPrioritiesHint">
+    <header class="priority-settings-header">
+      <h2 id="requirementPrioritiesTitle">需求优先级</h2>
+      <button class="priority-settings-close" id="closeRequirementPriorities" type="button" aria-label="关闭">×</button>
+    </header>
+    <div class="priority-settings-body">
+      <div class="priority-settings-columns" aria-hidden="true"><span>排序</span><span>名称</span><span>预览</span><span>使用情况</span></div>
+      <div class="priority-settings-list" id="requirementPriorityList" aria-label="需求优先级列表"></div>
+      <button class="btn btn-outline-secondary btn-sm" id="addRequirementPriority" type="button"><i class="bi bi-plus-lg" aria-hidden="true"></i> 新增优先级</button>
+    </div>
+    <footer class="priority-settings-footer">
+      <p class="priority-settings-message" id="requirementPriorityMessage" role="status" aria-live="polite"></p>
+      <button class="btn btn-outline-secondary" id="cancelRequirementPriorities" type="button">取消</button>
+      <button class="btn btn-primary" id="saveRequirementPriorities" type="button">保存</button>
+    </footer>
+  </dialog>
+</section>
