@@ -6,23 +6,15 @@
 
 ## 界面预览
 
-截图来自本地运行的 Release Lite，主机信息、项目和仓库名称、需求标题及其他敏感信息已做模糊处理。
-
 ### 首页
-
-集中查看 CPU、内存压力、磁盘、网络流量和项目运行状态。
 
 ![首页的系统指标、内存压力和项目状态](docs/screenshots/overview.jpg)
 
 ### 项目管理
 
-按名称或运行环境筛选项目，查看进程资源和监听端口，并从列表执行常用操作。
-
 ![项目管理列表和运行状态](docs/screenshots/projects.jpg)
 
 ### 项目详情
-
-查看项目运行环境、进程状态和代码更新历史，也可以切换到项目配置或日志。
 
 ![项目详情中的运行信息和代码更新历史](docs/screenshots/project-detail.jpg)
 
@@ -31,26 +23,17 @@
 
 ### 需求与 Bug 总览
 
-从待提测卡片和本周发布日历查看近期安排。
-
-<img width="1680" height="1000" alt="image" src="https://github.com/user-attachments/assets/2afc6c9c-88d1-4923-b719-0d8286b21f18" />
-
+<img width="1680" height="1000" alt="需求与 Bug 总览" src="https://github.com/user-attachments/assets/2afc6c9c-88d1-4923-b719-0d8286b21f18" />
 
 ### 需求管理
-
-按项目切换需求列表，展开版本分组和父子需求，在当前页勾选记录提测。
 
 ![按版本分组的需求管理列表](docs/screenshots/requirements.jpg)
 
 ### Bug 管理
 
-在左侧筛选 Bug，在右侧操作台处理选中的记录。
-
 ![Bug 列表与操作台的双栏布局](docs/screenshots/bugs.jpg)
 
 ### 日志管理
-
-按项目或日志类型筛选文件，查看日志大小和更新时间。
 
 ![日志文件列表、筛选器和大小排序](docs/screenshots/logs.jpg)
 
