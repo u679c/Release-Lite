@@ -4,6 +4,41 @@
 
 项目没有前端构建步骤；HTML、CSS 和 JavaScript 直接由 Flask 提供。
 
+## 界面预览
+
+### 首页
+
+![首页的系统指标、内存压力和项目状态](docs/screenshots/overview.jpg)
+
+### 项目管理
+
+![项目管理列表和运行状态](docs/screenshots/projects.jpg)
+
+### 项目详情
+
+![项目详情中的运行信息和代码更新历史](docs/screenshots/project-detail.jpg)
+
+<details>
+<summary>查看需求与 Bug、发布日历和日志截图</summary>
+
+### 需求与 Bug 总览
+
+<img width="1680" height="1000" alt="需求与 Bug 总览" src="https://github.com/user-attachments/assets/2afc6c9c-88d1-4923-b719-0d8286b21f18" />
+
+### 需求管理
+
+![按版本分组的需求管理列表](docs/screenshots/requirements.jpg)
+
+### Bug 管理
+
+![Bug 列表与操作台的双栏布局](docs/screenshots/bugs.jpg)
+
+### 日志管理
+
+![日志文件列表、筛选器和大小排序](docs/screenshots/logs.jpg)
+
+</details>
+
 ## 功能
 
 | 模块 | 能力 |
@@ -156,7 +191,7 @@ POST /webhook/<project_id>/<secret>
 
 ### 接入配置
 
-该模块目前连接固定的业务多维表格，入口、Base token、表、视图和字段 ID 定义在 [issue_management/service.py](issue_management/service.py) 的 `SOURCE_URL`、`BASE_TOKEN`、`TABLES` 和 `PARENT_FIELDS` 中。接入其他表格时需要根据真实字段结构调整映射，不是只替换页面链接。
+需求与 Bug 模块通过 `lark-cli` 调用飞书多维表格 API，默认使用代码中预设的表和视图。要接入自己的需求和 Bug 列表，可以把飞书需求表和 Bug 表的链接、字段结构和状态选项提供给 AI Agent，请它修改 [issue_management/service.py](issue_management/service.py) 中的 `SOURCE_URL`、`BASE_TOKEN`、`TABLES` 和 `PARENT_FIELDS`，按实际业务适配表和视图 ID、字段映射、父子需求关系及状态流转。改完后先验证列表能同步，再到测试表里验证提测和 Bug 状态更新。
 
 所有 CLI 调用都使用 `--as user`，因此登录身份和权限取决于运行面板的系统用户。可先检查：
 
