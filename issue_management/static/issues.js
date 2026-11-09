@@ -55,6 +55,16 @@ window.IssueManagement = (() => {
     submittingBug = null,
     bugDetailKey = "";
   let creatingDiscussion = "";
+  const fixPopover = find("#issueBugFixPopover");
+  const fixForm = find("#issueBugFixForm");
+  const fixDelayButton = find("#issueBugFixDelay");
+  let scheduledFixes = {},
+    fixClockOffset = 0,
+    fixSaving = false,
+    fixPollPending = false,
+    fixNeedsReload = false,
+    fixLastPoll = 0,
+    fixRequestSequence = 0;
   let savingRequirementPriority = false;
   const selectedBugs = new Set();
   let bugSelectionScope = "";
@@ -66,12 +76,13 @@ window.IssueManagement = (() => {
   const selectedRequirements = new Set();
   const canSubmitRequirement = row => row.can_submit_testing === true;
   let requirementSelectionScope = "";
-  const preferenceKeys = ["q", "include_family", "sort_by", "sort_order"];
+  const preferenceKeys = ["q", "include_family", "sort_by", "sort_order", "date_to_today"];
   const conditionFields = ["project", "version", "person", "status", "priority", "environment", "hierarchy", "scope"];
   const urlFilterKeys = [
     "q",
     "created_from",
     "created_to",
+    "date_to_today",
     "include_family",
     "version_desc",
     "sort_by",
@@ -362,6 +373,7 @@ window.IssueManagement = (() => {
   }
   function setStatus(sync) {
     latestSyncStatus = sync;
+    form.elements.created_to.readOnly = filters.date_to_today === "1";
     const status = find("#issueSyncStatus");
     const range = sync.date_range;
     if (range) {
@@ -395,6 +407,7 @@ window.IssueManagement = (() => {
       const target = id ? new URLSearchParams({
         created_from: parameters.get("created_from"),
         created_to: parameters.get("created_to"),
+        date_to_today: parameters.get("date_to_today") || "0",
         q: id,
         condition_filter: JSON.stringify({ logic: "and", rules: [] }),
       }) : new URLSearchParams(parameters);
@@ -642,7 +655,7 @@ window.IssueManagement = (() => {
   function renderBugSelection() {
     const rows = kind === "bugs" ? data?.items || [] : [];
     const count = rows.filter(row => selectedBugs.has(row.id)).length;
-    const busy = Boolean(!data || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true");
+    const busy = Boolean(!data || fixSaving || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true");
     find("#issueBugBatchActions").hidden = kind !== "bugs" || count === 0;
     find("#issueBugSelectionCount").textContent = `已选 ${count} 条`;
     for (const checkbox of root.querySelectorAll("[data-bug-check]")) {
@@ -801,6 +814,7 @@ window.IssueManagement = (() => {
   }
   function selectBug(id) {
     if (id === selectedBugId || !data?.items.some(row => row.id === id)) return;
+    closeFixPopover();
     selectedBugId = id;
     find("#issueBugActionStatus").textContent = "";
     find("#issueBugDiscussionStatus").hidden = true;
@@ -956,7 +970,7 @@ window.IssueManagement = (() => {
   function renderBugDesk() {
     const row = data.items.find(item => item.id === selectedBugId);
     const index = data.items.indexOf(row);
-    const busy = Boolean(submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting);
+    const busy = Boolean(submittingBug || creatingDiscussion || fixSaving || data.sync.syncing || data.sync.submitting);
     renderBugDiscussion(row, busy);
     find("#issueBugPosition").textContent = row ? `${(page - 1) * data.page_size + index + 1} / ${data.total}` : "";
     const key = JSON.stringify(row || null);
@@ -978,7 +992,161 @@ window.IssueManagement = (() => {
       if (title.dataset.detail === selectedBugId) title.setAttribute("aria-current", "true");
     }
     renderBugSelection();
+    renderScheduledFix();
   }
+  function closeFixPopover() {
+    if (fixPopover.matches(":popover-open")) fixPopover.hidePopover();
+  }
+  function positionFixPopover() {
+    if (!fixPopover.matches(":popover-open")) return;
+    const anchor = fixDelayButton.getBoundingClientRect();
+    const panel = fixPopover.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const above = anchor.top - panel.height - 8;
+    const below = anchor.bottom + 8;
+    const top = above >= 8 ? above : below + panel.height <= viewportHeight - 8 ? below : Math.max(8, viewportHeight - panel.height - 8);
+    fixPopover.style.left = `${Math.max(8, Math.min(anchor.right - panel.width, window.innerWidth - panel.width - 8))}px`;
+    fixPopover.style.top = `${top}px`;
+  }
+  function renderScheduledFix() {
+    const row = kind === "bugs" ? data?.items.find(item => item.id === selectedBugId) : null;
+    const task = row && scheduledFixes[row.id];
+    const active = task && ["pending", "running"].includes(task.state);
+    const busy = Boolean(fixSaving || submittingBug || creatingDiscussion || data?.sync.syncing || data?.sync.submitting);
+    fixDelayButton.disabled = !row || busy || task?.state === "running" || ["已修复", "已关闭", "无需解决", "已取消", "重复bug", "转需求"].includes(row.status);
+    const countdown = find("#issueBugFixCountdown");
+    countdown.hidden = !active;
+    let label = "延时修复";
+    if (active) {
+      const seconds = Math.max(0, Math.ceil(task.due_at - (Date.now() / 1000 + fixClockOffset)));
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor(seconds / 60) % 60;
+      const remaining = `${hours ? `${hours}:` : ""}${String(hours ? minutes : Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+      countdown.textContent = task.state === "running" ? "提交中…" : seconds ? remaining : "等待执行…";
+      label = `定时修复：${countdown.textContent}，点击调整或取消`;
+    }
+    fixDelayButton.title = label;
+    fixDelayButton.setAttribute("aria-label", label);
+    const status = find("#issueBugFixStatus");
+    const failed = task?.state === "failed";
+    status.textContent = failed ? `定时修复失败：${task.error}。请检查状态后重新设置。` : task?.state === "completed" && row.status === "已修复" ? task.warning || "已按定时标记为“已修复”" : "";
+    status.classList.toggle("text-danger", failed || Boolean(task?.warning));
+    status.hidden = !status.textContent;
+    if (fixPopover.matches(":popover-open")) {
+      if (!row || fixPopover.dataset.recordId !== row.id || task?.state === "running") closeFixPopover();
+      else {
+        find("#issueBugFixCancel").hidden = !active;
+        positionFixPopover();
+      }
+    }
+  }
+  function acceptScheduledFixes(result) {
+    scheduledFixes = result.tasks;
+    fixClockOffset = result.server_time - Date.now() / 1000;
+    renderScheduledFix();
+  }
+  async function refreshScheduledFixes() {
+    if (fixPollPending || fixSaving) return;
+    fixPollPending = true;
+    fixLastPoll = Date.now();
+    const current = ++fixRequestSequence;
+    const opening = openSequence;
+    try {
+      const result = await request("/api/issues/bugs/scheduled-fixes");
+      if (current !== fixRequestSequence || opening !== openSequence || kind !== "bugs") return;
+      fixNeedsReload ||= Object.entries(result.tasks).some(([id, task]) => task.state === "completed" && (scheduledFixes[id]?.id !== task.id || scheduledFixes[id]?.state !== "completed"));
+      acceptScheduledFixes(result);
+      if (fixNeedsReload && !submittingBug && !creatingDiscussion && root.getAttribute("aria-busy") !== "true") {
+        fixNeedsReload = false;
+        await load();
+      }
+    } catch {
+      // The durable task keeps running when this page temporarily loses connectivity.
+    } finally {
+      fixPollPending = false;
+    }
+  }
+  fixPopover.addEventListener("beforetoggle", event => {
+    if (event.newState !== "open") return;
+    const row = data?.items.find(item => item.id === selectedBugId);
+    if (!row || fixDelayButton.disabled) {
+      event.preventDefault();
+      return;
+    }
+    fixPopover.dataset.recordId = row.id;
+    const task = scheduledFixes[row.id];
+    const minutes = task && ["pending", "running"].includes(task.state) ? task.minutes : 1;
+    fixForm.elements.fix_delay.value = [1, 5, 10].includes(minutes) ? String(minutes) : "custom";
+    find("#issueBugFixMinutes").value = [1, 5, 10].includes(minutes) ? 15 : minutes;
+    find("#issueBugFixError").hidden = true;
+    find("#issueBugFixCancel").hidden = task?.state !== "pending";
+    find("#issueBugFixConfirm").textContent = task?.state === "pending" ? "重新计时" : "确认";
+  });
+  fixPopover.addEventListener("toggle", event => {
+    if (event.newState === "open") positionFixPopover();
+  });
+  window.addEventListener("resize", positionFixPopover);
+  document.addEventListener("scroll", positionFixPopover, true);
+  for (const type of ["focus", "input"]) {
+    find("#issueBugFixMinutes").addEventListener(type, () => {
+      fixForm.elements.fix_delay.value = "custom";
+    });
+  }
+  async function saveScheduledFix(cancel = false) {
+    const row = data?.items.find(item => item.id === fixPopover.dataset.recordId);
+    if (!row || row.id !== selectedBugId || fixSaving || fixDelayButton.disabled) return;
+    const custom = find("#issueBugFixMinutes");
+    const choice = fixForm.elements.fix_delay.value;
+    if (!cancel && choice === "custom" && (!custom.value || !custom.reportValidity())) {
+      if (!custom.value) {
+        custom.required = true;
+        custom.reportValidity();
+        custom.required = false;
+      }
+      return;
+    }
+    const minutes = Number(choice === "custom" ? custom.value : choice);
+    const opening = openSequence;
+    fixSaving = true;
+    ++fixRequestSequence;
+    for (const control of fixForm.elements) control.disabled = true;
+    find("#issueBugFixError").hidden = true;
+    renderBugDesk();
+    try {
+      const result = await request(`/api/issues/bugs/${encodeURIComponent(row.id)}/scheduled-fix`, {
+        method: cancel ? "DELETE" : "PUT",
+        headers: { "Content-Type": "application/json" },
+        ...(cancel ? {} : { body: JSON.stringify({ minutes, expected_status: row.status }) })
+      });
+      if (opening !== openSequence) return;
+      acceptScheduledFixes(result);
+      closeFixPopover();
+    } catch (error) {
+      if (opening !== openSequence) return;
+      const message = find("#issueBugFixError");
+      message.textContent = error.message;
+      message.hidden = false;
+      positionFixPopover();
+    } finally {
+      fixSaving = false;
+      for (const control of fixForm.elements) control.disabled = false;
+      if (data && kind === "bugs") renderBugDesk();
+    }
+  }
+  fixForm.addEventListener("submit", event => {
+    event.preventDefault();
+    saveScheduledFix();
+  });
+  find("#issueBugFixCancel").addEventListener("click", () => saveScheduledFix(true));
+  setInterval(() => {
+    if (kind !== "bugs" || !root.classList.contains("active")) {
+      closeFixPopover();
+      return;
+    }
+    if (document.hidden) return;
+    renderScheduledFix();
+    if (Date.now() - fixLastPoll >= 3000) refreshScheduledFixes();
+  }, 1000);
   async function copyBugTitle(button) {
     const title = button.textContent;
     try {
@@ -1018,8 +1186,9 @@ window.IssueManagement = (() => {
   }
   async function updateBugStatus(status) {
     const row = data?.items.find(item => item.id === selectedBugId);
-    if (kind !== "bugs" || !row || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || row.status === status) return;
+    if (kind !== "bugs" || !row || fixSaving || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || row.status === status) return;
     const opening = openSequence;
+    closeFixPopover();
     const showStatus = (message, failed = false) => {
       const element = find("#issueBugActionStatus");
       element.textContent = message;
@@ -1050,6 +1219,7 @@ window.IssueManagement = (() => {
       if (opening !== openSequence) return;
       showStatus(result.warning || `已标记为“${result.status}”`, Boolean(result.warning));
       await load();
+      await refreshScheduledFixes();
     } catch (error) {
       if (opening !== openSequence) return;
       showStatus(`保存失败：${error.message}`, true);
@@ -1063,7 +1233,7 @@ window.IssueManagement = (() => {
     }
   }
   async function updateSelectedBugStatuses(status) {
-    if (kind !== "bugs" || !data || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true") return;
+    if (kind !== "bugs" || !data || fixSaving || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true") return;
     const records = data.items.filter(row => selectedBugs.has(row.id)).map(row => ({
       id: row.id,
       expected_status: row.status
@@ -1104,6 +1274,7 @@ window.IssueManagement = (() => {
       selectedBugs.clear();
       showStatus(result.warning || `${result.updated_count} 条 Bug 已标记为“${result.status}”`, Boolean(result.warning));
       await load();
+      await refreshScheduledFixes();
     } catch (error) {
       if (opening !== openSequence) return;
       showStatus(`批量更新失败：${error.message}`, true);
@@ -1178,6 +1349,8 @@ window.IssueManagement = (() => {
   }
   async function open(nextKind, parameters = new URLSearchParams()) {
     if (!(nextKind in labels)) return;
+    closeFixPopover();
+    fixLastPoll = 0;
     filterSyncPending = false;
     latestSyncStatus = null;
     if (kind === "overview" && filters.created_from && filters.created_to) {
@@ -1271,6 +1444,7 @@ window.IssueManagement = (() => {
         include_family: saved.filters.include_family || "0",
         sort_by: saved.filters.sort_by || "version",
         sort_order: saved.filters.sort_order || "asc",
+        date_to_today: saved.filters.date_to_today || "0",
         ...dateFilters
       };
       conditionFilter = saved.condition_filter;
@@ -1335,6 +1509,7 @@ window.IssueManagement = (() => {
       control.value = value;
     }
     form.inert = false;
+    form.elements.created_to.readOnly = filters.date_to_today === "1";
     form.elements.q.disabled = false;
     conditionBuilder.set(kind, {}, conditionFilter);
     form.elements.condition_logic.value = conditionFilter.logic;
@@ -1349,7 +1524,8 @@ window.IssueManagement = (() => {
   function jump(target, changes, resetFilters = false) {
     const jumpFilters = resetFilters ? {
       created_from: filters.created_from,
-      created_to: filters.created_to
+      created_to: filters.created_to,
+      date_to_today: filters.date_to_today || "0"
     } : {
       ...filters
     };
@@ -1427,10 +1603,8 @@ window.IssueManagement = (() => {
       ["设计稿", safeLink(row.design)],
       ["设计人员", escape(names(row.designers))]
     ];
-    const related = row.related.map(item => `<button class="issue-related-link" type="button" data-related-kind="${item.kind}" data-related-id="${escape(item.id)}">${escape(item.title)}</button>`).join("") || '<span class="muted">暂无关联记录</span>';
     find("#issueDetailContent").innerHTML = `<div class="issue-detail-title">${recordTitle(row)}</div>` +
-      `<small class="muted">${escape(row.id)}</small><dl class="issue-detail-grid">${pairs.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl><h3>关联 Bug</h3>` +
-      `<div class="issue-related">${related}</div>` +
+      `<small class="muted">${escape(row.id)}</small><dl class="issue-detail-grid">${pairs.map(([label, value]) => `<div><dt>${label}</dt><dd>${value}</dd></div>`).join("")}</dl>` +
       `<div class="issue-detail-footer">${safeLink(row.source_url, "在飞书打开详情")}</div>`;
     const dialog = find("#issueDetailDialog");
     if (!dialog.open) dialog.showModal();
@@ -1559,6 +1733,7 @@ window.IssueManagement = (() => {
     if (!event.target.name || event.target.name === "q") return;
     if (event.target.name === "condition_logic") return conditionBuilder.setLogic(event.target.value);
     filters[event.target.name] = event.target.type === "checkbox" ? event.target.checked ? "1" : "0" : event.target.value;
+    if (event.target.name === "date_to_today") form.elements.created_to.readOnly = event.target.checked;
     if (["sort_by", "sort_order"].includes(event.target.name)) collapsedVersions.clear();
     if (["created_from", "created_to"].includes(event.target.name)) {
       allowStaleCache = false;
@@ -1619,6 +1794,7 @@ window.IssueManagement = (() => {
     data = null;
     find("#issueContent").hidden = true;
     form.reset();
+    form.elements.created_to.readOnly = false;
     conditionBuilder.set(kind, {}, conditionFilter);
     dropdownControls.refresh();
     renderProjectOptions();
@@ -1669,6 +1845,7 @@ window.IssueManagement = (() => {
         kind,
         created_from: filters.created_from,
         created_to: filters.created_to,
+        date_to_today: filters.date_to_today || "0",
         include_family: kind === "requirements" ? filters.include_family || "0" : "0"
       }),
         {
@@ -1960,7 +2137,7 @@ window.IssueManagement = (() => {
     if (kind !== "overview") return overviewParameters;
     const parameters = new URLSearchParams({ condition_filter: JSON.stringify(conditionFilter) });
     for (const [key, value] of Object.entries(filters)) {
-      if (!["q", "created_from", "created_to", "dashboard_scope", "test_date", ...conditionFields].includes(key)) continue;
+      if (!["q", "created_from", "created_to", "date_to_today", "dashboard_scope", "test_date", ...conditionFields].includes(key)) continue;
       for (const item of Array.isArray(value) ? value : [value]) {
         if (item !== undefined && item !== null && item !== "") parameters.append(key, item);
       }

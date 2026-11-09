@@ -127,6 +127,16 @@
 .issue-filter-footer {
   grid-column: 1 / -1;
 }
+.issue-filters .issue-date-today {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.issue-date-today .form-check-input {
+  margin: 0;
+}
 .issue-filters .form-select,
 .issue-filters .form-control {
   font-size: 13px;
@@ -1949,6 +1959,107 @@ body.issue-workspace-resizing * {
 }
 #issueBugActionStatus:empty {
   display: none;
+}
+.issue-bug-fix-buttons {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+.issue-bug-fix-buttons > button:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.issue-bug-fix-buttons > button:last-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left-color: #ffffff60;
+  font-variant-numeric: tabular-nums;
+}
+.issue-bug-fix-buttons > button:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+#issueBugFixStatus {
+  margin: 0 0 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.issue-bug-fix-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 14px;
+  width: min(270px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: #fff;
+  box-shadow: 0 8px 28px #10182826;
+}
+.issue-bug-fix-popover h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.issue-bug-fix-options {
+  display: grid;
+  gap: 4px;
+}
+.issue-bug-fix-options > label,
+.issue-bug-fix-custom {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  min-height: 38px;
+  margin: 0;
+  padding: 8px;
+  border-radius: 6px;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.issue-bug-fix-options span {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.issue-bug-fix-options > label:has(:checked),
+.issue-bug-fix-custom:has(:checked) {
+  background: #eff6ff;
+  color: var(--blue);
+}
+.issue-bug-fix-options input[type="radio"] {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--blue);
+}
+#issueBugFixMinutes {
+  flex: 0 0 72px;
+  width: 72px;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font: inherit;
+  color: var(--ink);
+}
+.issue-bug-fix-popover footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+#issueBugFixError {
+  margin: 8px 0 0;
 }
 @media (max-width: 1050px) {
   .issue-workspace.is-bug-workspace {

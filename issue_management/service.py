@@ -104,7 +104,6 @@ TABLES = {
             "start_at": "fldPYlF2n8",
             "due_at": "fldQBKvq1R",
             "is_child": "fldjzBQSTT",
-            "related": "fldlH7hHvl",
             "category": "fldJWm309G",
             "document": "flda2bGuqs",
             "design": "fldszn4N8I",
@@ -190,7 +189,11 @@ def parse_date_range(filters):
     )
     try:
         start = date.fromisoformat(filters.get("created_from") or default_start.isoformat())
-        end = date.fromisoformat(filters.get("created_to") or today.isoformat())
+        end = (
+            today
+            if filters.get("date_to_today") == "1"
+            else date.fromisoformat(filters.get("created_to") or today.isoformat())
+        )
     except (TypeError, ValueError) as exc:
         raise ValueError("创建时间日期格式应为 YYYY-MM-DD") from exc
     if start > end:
@@ -213,6 +216,7 @@ class IssueService:
         self.submitting = False
         self.progress = ""
         self.sync_attempts = {}
+        self.scheduled_fixes = None
         try:
             cached = json.loads((self.cache_dir / "snapshot.json").read_text(encoding="utf-8"))
             if not isinstance(cached, dict):
@@ -1102,6 +1106,17 @@ class IssueService:
         return {"id": record_id, "status": result["status"], "warning": result["warning"]}
 
     def update_bug_statuses(self, records, status):
+        if self.scheduled_fixes is None:
+            return self._update_bug_statuses(records, status)
+        with self.scheduled_fixes.locked():
+            result = self._update_bug_statuses(records, status)
+            try:
+                self.scheduled_fixes.cancel_records([record["id"] for record in records])
+            except (OSError, ValueError):
+                result["warning"] = "状态已更新，但定时任务取消失败，请检查定时设置"
+            return result
+
+    def _update_bug_statuses(self, records, status):
         if not isinstance(records, list) or not 1 <= len(records) <= PAGE_SIZE:
             raise ValueError(f"请选择 1 至 {PAGE_SIZE} 条 Bug")
         if not isinstance(status, str) or status not in BUG_TARGET_STATUSES:

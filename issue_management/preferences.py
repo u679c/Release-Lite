@@ -22,6 +22,7 @@ FILTER_KEYS = (
     "version_desc",
     "sort_by",
     "sort_order",
+    "date_to_today",
 )
 AUTO_SYNC_CHILDREN = ("requirements", "bugs")
 
@@ -51,6 +52,8 @@ def normalize_preferences(payload):
             raise ValueError("需求层级显示设置无效")
         if key == "version_desc" and value not in ("", "0", "1"):
             raise ValueError("版本排序设置无效")
+        if key == "date_to_today" and value not in ("", "0", "1"):
+            raise ValueError("日期更新设置无效")
         if (
             key == "project"
             and isinstance(value, list)
@@ -77,7 +80,7 @@ def normalize_preferences(payload):
         for key in FILTER_KEYS:
             value = filters.get(key)
             if (
-                key in ("q", "include_family", "version_desc", "sort_by", "sort_order")
+                key in ("q", "include_family", "version_desc", "sort_by", "sort_order", "date_to_today")
                 or (key == "project" and projects)
                 or not value
             ):

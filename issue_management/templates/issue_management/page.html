@@ -64,6 +64,7 @@
     <form id="issueFilters" class="issue-filters" role="search" onsubmit="return false;">
       <label>创建时间（起）<input class="form-control" name="created_from" type="date" aria-label="创建开始日期" required /></label>
       <label>创建时间（止）<input class="form-control" name="created_to" type="date" aria-label="创建结束日期" required /></label>
+      <label class="issue-date-today"><input class="form-check-input" name="date_to_today" type="checkbox" value="1" />始终更新日期为今天</label>
       <div id="issueProjectMultiFilter" class="issue-project-multi" hidden>
         <span id="issueProjectLabel" class="issue-project-label">项目（多选）</span>
         <details id="issueProjectDropdown" class="issue-project-dropdown">
@@ -182,15 +183,35 @@
           <div id="issueBugDetail" class="issue-bug-detail"></div>
           <footer class="issue-bug-actions">
             <p id="issueBugActionStatus" class="small" role="status" aria-live="polite"></p>
+            <p id="issueBugFixStatus" class="small" role="status" aria-live="polite" hidden></p>
             <div>
               <button id="issueBugSkip" class="btn btn-outline-secondary btn-sm" type="button">下一条 <i class="bi bi-arrow-right"></i></button
               ><button class="btn btn-primary btn-sm" type="button" data-bug-status="已修复待发布">已修复待发布</button
-              ><button class="btn btn-primary btn-sm" type="button" data-bug-status="已修复">已修复</button>
+              ><span class="issue-bug-fix-buttons" role="group" aria-label="修复 Bug">
+                <button class="btn btn-primary btn-sm" type="button" data-bug-status="已修复">已修复</button>
+                <button id="issueBugFixDelay" class="btn btn-primary btn-sm" type="button" popovertarget="issueBugFixPopover" aria-label="设置延时修复" title="延时修复" disabled><i class="bi bi-clock" aria-hidden="true"></i><span id="issueBugFixCountdown" hidden></span><i class="bi bi-chevron-up" aria-hidden="true"></i></button>
+              </span>
             </div>
           </footer>
         </aside>
       </div>
     </section>
+  </div>
+  <div id="issueBugFixPopover" class="issue-bug-fix-popover" popover="auto" role="dialog" aria-labelledby="issueBugFixTitle">
+    <form id="issueBugFixForm" novalidate>
+      <h3 id="issueBugFixTitle">延时修复</h3>
+      <div class="issue-bug-fix-options" role="radiogroup" aria-label="延时时间">
+        <label><input type="radio" name="fix_delay" value="1" checked><span>1 分钟</span></label>
+        <label><input type="radio" name="fix_delay" value="5"><span>5 分钟</span></label>
+        <label><input type="radio" name="fix_delay" value="10"><span>10 分钟</span></label>
+        <div class="issue-bug-fix-custom"><input type="radio" name="fix_delay" value="custom" aria-label="使用自定义分钟数"><input id="issueBugFixMinutes" type="number" min="1" max="10080" step="1" value="15" aria-label="自定义分钟数"><span>分钟</span></div>
+      </div>
+      <p id="issueBugFixError" class="small text-danger" role="alert" hidden></p>
+      <footer>
+        <button id="issueBugFixCancel" class="btn btn-outline-secondary btn-sm" type="button" hidden>取消定时</button>
+        <button id="issueBugFixConfirm" class="btn btn-primary btn-sm" type="submit">确认</button>
+      </footer>
+    </form>
   </div>
   <dialog id="issueDetailDialog" class="issue-detail-dialog">
     <header>

@@ -2,6 +2,7 @@ from flask import Blueprint, current_app, jsonify, request, send_file
 
 from .service import IssueBusyError, IssueService, SyncError, parse_date_range
 from .preferences import PreferenceStore
+from .scheduled_fixes import ScheduledBugFixes
 
 
 blueprint = Blueprint(
@@ -14,9 +15,12 @@ blueprint = Blueprint(
 
 
 def init_app(app, data_dir):
-    app.extensions["issue_management"] = IssueService(data_dir / "issues")
+    service = IssueService(data_dir / "issues")
+    service.scheduled_fixes = ScheduledBugFixes(service)
+    app.extensions["issue_management"] = service
     app.extensions["issue_preferences"] = PreferenceStore(data_dir / "issues")
     app.register_blueprint(blueprint)
+    service.scheduled_fixes.start()
 
 
 @blueprint.errorhandler(ValueError)
@@ -41,13 +45,17 @@ def issue_home_summary():
     preferences = current_app.extensions["issue_preferences"]
     saved = preferences.access("overview")
     requirements = preferences.access("requirements")
-    filters = {"q": saved["filters"].get("q", ""), "condition_filter": saved["condition_filter"]}
+    filters = {
+        "q": saved["filters"].get("q", ""),
+        "date_to_today": saved["filters"].get("date_to_today", "0"),
+        "condition_filter": saved["condition_filter"],
+    }
     if request.args.get("condition_filter") is not None:
         filters = request.args.to_dict()
         if "project" in request.args:
             filters["project"] = request.args.getlist("project")
     else:
-        for key in ("created_from", "created_to"):
+        for key in ("created_from", "created_to", "date_to_today"):
             if key in request.args:
                 filters[key] = request.args[key]
     response = jsonify(
@@ -168,6 +176,30 @@ def update_bug_statuses():
 @blueprint.post("/api/issues/bugs/<record_id>/discussion")
 def create_bug_discussion(record_id):
     return jsonify(current_app.extensions["issue_management"].create_bug_discussion(record_id))
+
+
+@blueprint.get("/api/issues/bugs/scheduled-fixes")
+def scheduled_bug_fixes():
+    response = jsonify(current_app.extensions["issue_management"].scheduled_fixes.state())
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@blueprint.route("/api/issues/bugs/<record_id>/scheduled-fix", methods=["PUT", "DELETE"])
+def schedule_bug_fix(record_id):
+    scheduler = current_app.extensions["issue_management"].scheduled_fixes
+    if request.method == "DELETE":
+        result = scheduler.cancel(record_id)
+    else:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify(error="定时修复参数格式不正确"), 400
+        result = scheduler.schedule(
+            record_id, payload.get("minutes"), payload.get("expected_status")
+        )
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @blueprint.post("/api/issues/requirements/<record_id>/discussion")
