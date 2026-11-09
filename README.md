@@ -208,7 +208,7 @@ POST /webhook/<project_id>/<secret>
 
 ### 接入配置
 
-该模块目前连接固定的业务多维表格，入口、Base token、表、视图和字段 ID 定义在 [issue_management/service.py](issue_management/service.py) 的 `SOURCE_URL`、`BASE_TOKEN`、`TABLES` 和 `PARENT_FIELDS` 中。接入其他表格时需要根据真实字段结构调整映射，不是只替换页面链接。
+需求与 Bug 模块通过 `lark-cli` 调用飞书多维表格 API，默认使用代码中预设的表和视图。要接入自己的需求和 Bug 列表，可以把飞书需求表和 Bug 表的链接、字段结构和状态选项提供给 AI Agent，请它修改 [issue_management/service.py](issue_management/service.py) 中的 `SOURCE_URL`、`BASE_TOKEN`、`TABLES` 和 `PARENT_FIELDS`，按实际业务适配表和视图 ID、字段映射、父子需求关系及状态流转。改完后先验证列表能同步，再到测试表里验证提测和 Bug 状态更新。
 
 所有 CLI 调用都使用 `--as user`，因此登录身份和权限取决于运行面板的系统用户。可先检查：
 
