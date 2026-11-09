@@ -33,7 +33,8 @@
 
 从待提测卡片和本周发布日历查看近期安排。
 
-![待提测卡片和本周发布日历](docs/screenshots/issue-overview.jpg)
+<img width="1680" height="1000" alt="image" src="https://github.com/user-attachments/assets/2afc6c9c-88d1-4923-b719-0d8286b21f18" />
+
 
 ### 需求管理
 
