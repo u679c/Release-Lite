@@ -1,4 +1,6 @@
 let projectList = [];
+const selectedProjectIds = new Set();
+let projectBatchRunning = false;
 let serverInfo = {};
 let storageSort = "size_desc";
 let storagePage = 1;
@@ -291,7 +293,8 @@ function card(p) {
     ? `<button class="icon-button stop-button" title="停止" onclick="act(${p.id},'stop')"><i class="bi bi-stop-circle"></i></button>`
     : `<button class="icon-button start-button" title="${updating ? "依赖更新中，不能启动" : "启动"}" ${updating ? "disabled" : `onclick="act(${p.id},'start')"`}><i class="bi bi-play-circle"></i></button>`;
   return (
-    `<tr>` +
+    `<tr class="project-row" onclick="toggleProjectRow(event,${p.id})">` +
+    `<td class="project-select-cell"><input class="form-check-input project-select" type="checkbox" data-project-id="${p.id}" aria-label="选择项目 ${esc(p.name)}" ${selectedProjectIds.has(p.id) ? "checked" : ""} ${projectBatchRunning ? "disabled" : ""} onchange="toggleProjectSelection(${p.id},this.checked)"></td>` +
     `<td>` +
     `<div class="project-name">${esc(p.name)}</div>` +
     `<div class="project-path">${esc(p.root_path)}</div></td>` +
@@ -312,12 +315,10 @@ function card(p) {
     `</tr>`
   );
 }
-function renderProjects() {
-  const target = $("#projects");
-  if (!target) return;
+function filteredProjects() {
   const query = $("#projectNameFilter")?.value.trim().toLocaleLowerCase() || "";
   const runtime = $("#projectRuntimeFilter")?.value || "";
-  const projects = projectList.filter((project) => {
+  return projectList.filter((project) => {
     const matchesName =
       !query ||
       String(project.name || "")
@@ -326,12 +327,86 @@ function renderProjects() {
     const matchesRuntime = !runtime || (project.runtime || "python") === runtime;
     return matchesName && matchesRuntime;
   });
+}
+function updateProjectSelection() {
+  const projects = filteredProjects();
+  const visibleIds = new Set(projects.map((project) => project.id));
+  for (const id of selectedProjectIds) {
+    if (!visibleIds.has(id)) selectedProjectIds.delete(id);
+  }
+  const selectAll = $("#projectSelectAll");
+  if (selectAll) {
+    selectAll.checked = projects.length > 0 && selectedProjectIds.size === projects.length;
+    selectAll.indeterminate = selectedProjectIds.size > 0 && !selectAll.checked;
+    selectAll.disabled = projectBatchRunning || projects.length === 0;
+  }
+  const actions = $("#projectBatchActions");
+  if (actions) {
+    actions.hidden = selectedProjectIds.size === 0;
+    actions.querySelectorAll("button").forEach((button) => (button.disabled = projectBatchRunning));
+  }
+  document.querySelectorAll(".project-select").forEach((checkbox) => {
+    checkbox.checked = selectedProjectIds.has(Number(checkbox.dataset.projectId));
+    checkbox.disabled = projectBatchRunning;
+  });
+}
+function toggleProjectSelection(id, checked) {
+  if (projectBatchRunning) return;
+  if (checked) selectedProjectIds.add(id);
+  else selectedProjectIds.delete(id);
+  updateProjectSelection();
+}
+function toggleProjectRow(event, id) {
+  if (event.target.closest("button, a, input, select, textarea, label, .row-actions")) return;
+  toggleProjectSelection(id, !selectedProjectIds.has(id));
+}
+function toggleAllProjects(checked) {
+  if (projectBatchRunning) return;
+  selectedProjectIds.clear();
+  if (checked) filteredProjects().forEach((project) => selectedProjectIds.add(project.id));
+  updateProjectSelection();
+}
+function renderProjects() {
+  const target = $("#projects");
+  if (!target) return;
+  const projects = filteredProjects();
   target.innerHTML = projects.length
     ? projects.map(card).join("")
-    : `<tr><td colspan="6" class="empty-row">${projectList.length ? "无匹配项目" : "暂无项目，点击“新建项目”添加"}</td></tr>`;
+    : `<tr><td colspan="7" class="empty-row">${projectList.length ? "无匹配项目" : "暂无项目，点击“新建项目”添加"}</td></tr>`;
+  updateProjectSelection();
 }
 function filterProjects() {
+  selectedProjectIds.clear();
   renderProjects();
+}
+async function batchProjectAction(action) {
+  const label = { start: "启动", stop: "停止", restart: "重启" }[action];
+  if (!label || projectBatchRunning) return;
+  const projects = filteredProjects().filter((project) => selectedProjectIds.has(project.id));
+  if (!projects.length) return;
+  projectBatchRunning = true;
+  updateProjectSelection();
+  let succeeded = 0;
+  const failures = [];
+  try {
+    for (const project of projects) {
+      try {
+        await api(`/api/projects/${project.id}/action/${action}`, {
+          method: "POST",
+          body: JSON.stringify({}),
+        });
+        succeeded++;
+      } catch (e) {
+        failures.push(`${project.name}：${e.message}`);
+      }
+    }
+    toast(`${label}完成：成功 ${succeeded} 个${failures.length ? `，失败 ${failures.length} 个（${failures.join("；")}）` : ""}`, failures.length ? "error" : "success");
+    await refresh();
+    if (["start", "restart"].includes(action)) setTimeout(refresh, 1200);
+  } finally {
+    projectBatchRunning = false;
+    updateProjectSelection();
+  }
 }
 async function loadTmuxSessions() {
   const target = $("#tmuxSessions");

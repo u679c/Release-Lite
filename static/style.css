@@ -563,7 +563,33 @@ body {
 }
 .project-filters {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
+}
+.project-batch-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  white-space: nowrap;
+}
+.project-batch-actions[hidden] {
+  display: none;
+}
+.project-batch-actions .action-link:disabled {
+  opacity: 0.5;
+  cursor: wait;
+  text-decoration: none;
+}
+.project-table .project-select-cell {
+  width: 44px;
+  padding-right: 0;
+  text-align: center;
+}
+.project-select-cell .form-check-input {
+  float: none;
+  margin: 0;
+  cursor: pointer;
 }
 .project-filters .form-control {
   width: min(260px, 42vw);
@@ -742,6 +768,9 @@ body {
 .status.stopped {
   background: #fef0f0;
   color: var(--red);
+}
+.project-table .project-row {
+  cursor: pointer;
 }
 .project-table tbody tr:hover td {
   background: #fafcff;

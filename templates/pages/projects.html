@@ -1,10 +1,11 @@
 <section class="page-view" id="projects-page">
-  <div class="section-heading page-heading project-page-heading"><div class="project-filters" role="search"><input id="projectNameFilter" class="form-control" type="search" placeholder="搜索项目名称" aria-label="搜索项目名称" oninput="filterProjects()"><select id="projectRuntimeFilter" class="form-select" aria-label="按项目类型筛选" onchange="filterProjects()"><option value="">全部类型</option><option value="python">Python</option><option value="node">Node.js</option><option value="generic">通用</option></select></div><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
+  <div class="section-heading page-heading project-page-heading"><div class="project-filters" role="search"><input id="projectNameFilter" class="form-control" type="search" placeholder="搜索项目名称" aria-label="搜索项目名称" oninput="filterProjects()"><select id="projectRuntimeFilter" class="form-select" aria-label="按项目类型筛选" onchange="filterProjects()"><option value="">全部类型</option><option value="python">Python</option><option value="node">Node.js</option><option value="generic">通用</option></select><div id="projectBatchActions" class="project-batch-actions" hidden><button type="button" class="action-link" onclick="batchProjectAction('start')">一键启动</button><button type="button" class="action-link" onclick="batchProjectAction('stop')">一键停止</button><button type="button" class="action-link" onclick="batchProjectAction('restart')">一键重启</button></div></div><button class="btn btn-primary" onclick="openEditor()">+ 新建项目</button></div>
   <section class="content-card project-table-card">
     <div class="table-responsive">
       <table class="table align-middle project-table mb-0">
         <thead>
           <tr>
+            <th class="project-select-cell"><input id="projectSelectAll" class="form-check-input" type="checkbox" aria-label="全选当前筛选结果" onchange="toggleAllProjects(this.checked)"></th>
             <th>项目</th>
             <th>分支</th>
             <th>状态</th>
