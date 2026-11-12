@@ -1852,6 +1852,14 @@ class IssueService:
         else:
             total = len(selected)
             page_count = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+            active_bug = filters.get("active_bug") if kind == "bugs" else None
+            if active_bug:
+                active_index = next(
+                    (index for index, row in enumerate(selected) if row["id"] == active_bug),
+                    None,
+                )
+                if active_index is not None:
+                    page = active_index // PAGE_SIZE + 1
             page = min(page, page_count)
             page_rows = selected[(page - 1) * PAGE_SIZE : page * PAGE_SIZE]
         # Related links are resolved against the complete cache, not the current page.

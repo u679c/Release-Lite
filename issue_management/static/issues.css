@@ -1746,6 +1746,9 @@ body.issue-workspace-resizing * {
   white-space: nowrap;
 }
 .issue-desk-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-shrink: 0;
 }
 .issue-bug-discussion {

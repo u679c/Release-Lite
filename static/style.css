@@ -203,6 +203,82 @@ body {
 .pinned-page > .nav-link {
   flex: 1;
 }
+.pinned-page.unavailable .nav-label {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.pinned-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: #304568;
+  color: #dce8ff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.pinned-group-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  width: min(340px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  padding: 6px;
+  border: 1px solid #304058;
+  border-radius: 10px;
+  background: var(--navy);
+  color: #c7d0df;
+  box-shadow: 0 8px 28px #10182830;
+}
+.pinned-group-heading {
+  padding: 6px 10px 8px;
+  color: #91a6c3;
+  font-size: 12px;
+}
+.pinned-group-list {
+  max-height: min(380px, calc(100dvh - 66px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.pinned-group-popover .nav-link {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #aebacf;
+  text-align: left;
+  font-size: 13px;
+}
+.pinned-group-popover .nav-link:hover {
+  background: #1c2a3f;
+  color: #fff;
+}
+.pinned-group-popover .nav-link.active {
+  background: #203a65;
+  color: #fff;
+}
+.pinned-group-popover .nav-icon {
+  color: #91a6c3;
+  flex-shrink: 0;
+}
+.pinned-group-popover .nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pinned-group-popover .nav-link:focus-visible {
+  outline: 2px solid #8ab5ff;
+  outline-offset: -2px;
+}
 .pin-button {
   display: inline-flex;
   align-items: center;
@@ -233,16 +309,95 @@ body {
   color: #fff;
   background: #1c2a3f;
 }
-.sidebar-collapsed .pinned-page {
+.sidebar-collapsed .sidebar .pinned-page {
   flex-direction: column;
   gap: 0;
 }
-.sidebar-collapsed .pinned-page > .pin-button {
+.sidebar-collapsed .sidebar .pinned-page > .pin-button {
   width: 24px;
   height: 24px;
 }
 .settings-card {
+  max-width: 600px;
   padding: 24px;
+}
+.pinned-classification-setting {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 22px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.settings-number-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.settings-number-stepper button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.settings-number-stepper button i {
+  display: block;
+  line-height: 1;
+}
+.settings-number-stepper input {
+  width: 48px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  text-align: center;
+  line-height: 22px;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.settings-number-stepper input::-webkit-inner-spin-button,
+.settings-number-stepper input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+.settings-number-stepper input:disabled {
+  opacity: 0.45;
+}
+.settings-auto-group-switch {
+  margin: 0 0 0 auto;
+  min-height: 0;
+}
+.settings-auto-group-switch .form-check-input {
+  width: 48px;
+  height: 16px;
+  margin-top: 0;
+  cursor: pointer;
+}
+.settings-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  text-align: left;
+}
+.settings-entry > i:last-child {
+  margin-left: auto;
+}
+.settings-number-stepper input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
 }
 .priority-settings-dialog {
   width: min(720px, calc(100vw - 32px));

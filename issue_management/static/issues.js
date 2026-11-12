@@ -51,6 +51,8 @@ window.IssueManagement = (() => {
   let allowStaleCache = false;
   let overviewParameters = "";
   let selectedBugId = "",
+    restoringBugId = "",
+    preserveBugStage = false,
     bugStage = "all",
     submittingBug = null,
     bugDetailKey = "";
@@ -454,6 +456,7 @@ window.IssueManagement = (() => {
       });
       if (allowStaleCache) parameters.set("allow_stale", "1");
       if (kind === "bugs") parameters.set("bug_stage", bugStage);
+      if (kind === "bugs" && restoringBugId) parameters.set("active_bug", restoringBugId);
       for (const [key, value] of Object.entries(filters)) {
         for (const item of Array.isArray(value) ? value : [value]) {
           if (item !== undefined && item !== null && item !== "") parameters.append(key, item);
@@ -467,7 +470,7 @@ window.IssueManagement = (() => {
       if (kind === "overview") overviewParameters = currentOverviewParameters();
       if (result.sync.ready) {
         if (!result.sync.stale) allowStaleCache = false;
-        if (kind === "bugs" && bugStage !== "all" && !(result.bug_stages[bugStage] > 0)) {
+        if (kind === "bugs" && !preserveBugStage && bugStage !== "all" && !(result.bug_stages[bugStage] > 0)) {
           bugStage = "all";
           page = 1;
           selectedBugId = "";
@@ -480,6 +483,7 @@ window.IssueManagement = (() => {
           filters.sort_order = result.sort_order;
         }
         page = result.page;
+        restoringBugId = "";
         bugSelectionScope = bugSelectionKey();
         if (requirementSelectionScope !== bugSelectionKey()) selectedRequirements.clear();
         requirementSelectionScope = bugSelectionKey();
@@ -969,6 +973,7 @@ window.IssueManagement = (() => {
   }
   function renderBugDesk() {
     const row = data.items.find(item => item.id === selectedBugId);
+    renderPinButton();
     const index = data.items.indexOf(row);
     const busy = Boolean(submittingBug || creatingDiscussion || fixSaving || data.sync.syncing || data.sync.submitting);
     renderBugDiscussion(row, busy);
@@ -1387,12 +1392,14 @@ window.IssueManagement = (() => {
     notificationControl.hidden = kind === "requirements";
     allowStaleCache = true;
     renderAutoSyncControl();
-    selectedBugId = "";
+    selectedBugId = nextKind === "bugs" ? parameters.get("active_bug") || "" : "";
+    restoringBugId = selectedBugId;
+    preserveBugStage = nextKind === "bugs" && parameters.has("active_bug");
     selectedBugs.clear();
     bugSelectionScope = "";
     selectedRequirements.clear();
     requirementSelectionScope = "";
-    bugStage = "all";
+    bugStage = nextKind === "bugs" && ["all", "pending", "release", "fixed"].includes(parameters.get("bug_stage")) ? parameters.get("bug_stage") : "all";
     bugDetailKey = "";
     find("#issueBugActionStatus").textContent = "";
     find("#issueBugBatchStatus").hidden = true;
@@ -2150,5 +2157,26 @@ window.IssueManagement = (() => {
     }
     return overviewParameters;
   }
-  return { open, getOverviewParameters };
+  function getBugPinTarget() {
+    const row = kind === "bugs" ? data?.items.find(item => item.id === selectedBugId) : null;
+    if (!row) return null;
+    const parameters = new URLSearchParams({ condition_filter: JSON.stringify(conditionFilter) });
+    for (const [key, value] of Object.entries(filters).sort(([left], [right]) => left.localeCompare(right))) {
+      for (const item of Array.isArray(value) ? value : [value]) {
+        if (item !== undefined && item !== null && item !== "") parameters.append(key, item);
+      }
+    }
+    parameters.set("bug_stage", bugStage);
+    // The active record is navigation state, never a search filter.
+    parameters.set("active_bug", selectedBugId);
+    return { route: `bugs?${parameters}`, label: `Bug-${row.title || row.id}` };
+  }
+  function renderPinButton() {
+    const target = find("#issueBugPinButton");
+    const pin = getBugPinTarget();
+    target.replaceChildren();
+    if (pin) target.appendChild(createPinButton(pin.route, pin.label));
+    renderPinnedPages();
+  }
+  return { open, getOverviewParameters, getBugPinTarget, renderPinButton };
 })();

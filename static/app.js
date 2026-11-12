@@ -112,15 +112,86 @@ const pageTabLabels = new Map([
 const openedPageTabs = new Map();
 const detailTabLabels = { info: "项目信息", config: "项目配置", logs: "日志", terminal: "终端" };
 const pinnedPagesStorageKey = "release-lite-pinned-pages";
+const pinnedGroupThresholdStorageKey = "release-lite-pinned-group-threshold";
+let pinnedGroupThreshold = 5;
+const pinnedGroupEnabledStorageKey = "release-lite-pinned-group-enabled";
+let pinnedGroupEnabled = true;
+try {
+  pinnedGroupEnabled = localStorage.getItem(pinnedGroupEnabledStorageKey) !== "false";
+} catch {}
+try {
+  const saved = localStorage.getItem(pinnedGroupThresholdStorageKey);
+  const value = Number(saved);
+  if (saved !== null && saved.trim() !== "" && Number.isSafeInteger(value) && value >= 0) pinnedGroupThreshold = value;
+} catch {}
 let pinnedPages = [];
 let currentPinTarget = null;
+let openedPinnedGroup = null;
+let pinnedGroupSnapshot = null;
+let pinnedGroupPopover = null;
+let pinnedProjectsLoaded = false;
+const pinnedBugAvailability = new Map();
+let pinnedBugValidationRunning = false;
+const lastPinnedPagesStorageKey = "release-lite-last-pinned-pages";
+let lastPinnedPages = {};
+try {
+  const saved = JSON.parse(localStorage.getItem(lastPinnedPagesStorageKey) || "{}");
+  for (const key of ["bugs", "projects"]) {
+    if (typeof saved?.[key] === "string") lastPinnedPages[key] = saved[key];
+  }
+} catch {}
 try {
   const saved = JSON.parse(localStorage.getItem(pinnedPagesStorageKey) || "[]");
   if (Array.isArray(saved)) {
-    pinnedPages = saved.filter((item) => item && typeof item.route === "string" && /^detail\/\d+\/(info|config|logs|terminal)(\?subproject=[^&]*)?$/.test(item.route));
-    pinnedPages = [...new Map(pinnedPages.map((item) => [item.route, { route: item.route }])).values()];
+    pinnedPages = saved.filter((item) => item && typeof item.route === "string" && (/^detail\/\d+\/(info|config|logs|terminal)(\?subproject=[^&]*)?$/.test(item.route) || (item.route.startsWith("bugs?") && new URLSearchParams(item.route.slice(5)).has("active_bug"))));
+    pinnedPages = [...new Map(pinnedPages.map((item) => [item.route, { route: item.route, label: typeof item.label === "string" ? item.label : undefined }])).values()];
   }
 } catch {}
+function initializePinnedSettings() {
+  const input = $("#pinnedGroupThreshold");
+  if (!input) return;
+  input.value = pinnedGroupThreshold;
+  const toggle = $("#pinnedGroupEnabled");
+  const decrease = $("#decreasePinnedGroupThreshold");
+  const increase = $("#increasePinnedGroupThreshold");
+  const updateControls = () => {
+    toggle.checked = pinnedGroupEnabled;
+    input.disabled = !pinnedGroupEnabled;
+    decrease.disabled = !pinnedGroupEnabled || pinnedGroupThreshold <= 0;
+    increase.disabled = !pinnedGroupEnabled || pinnedGroupThreshold >= Number.MAX_SAFE_INTEGER;
+  };
+  updateControls();
+  toggle.addEventListener("change", () => {
+    pinnedGroupEnabled = toggle.checked;
+    updateControls();
+    try {
+      localStorage.setItem(pinnedGroupEnabledStorageKey, String(pinnedGroupEnabled));
+    } catch {
+      toast("设置无法保存，刷新后可能丢失", "error");
+    }
+    renderPinnedPages();
+  });
+  for (const [button, delta] of [[decrease, -1], [increase, 1]]) {
+    button.addEventListener("click", () => {
+      input.value = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, pinnedGroupThreshold + delta));
+      input.dispatchEvent(new Event("change"));
+    });
+  }
+  input.addEventListener("input", () => input.setCustomValidity(""));
+  input.addEventListener("change", () => {
+    const value = input.valueAsNumber;
+    input.setCustomValidity(Number.isSafeInteger(value) && value >= 0 ? "" : "请输入大于或等于 0 的整数");
+    if (!input.reportValidity()) return;
+    pinnedGroupThreshold = value;
+    updateControls();
+    try {
+      localStorage.setItem(pinnedGroupThresholdStorageKey, String(value));
+    } catch {
+      toast("设置无法保存，刷新后可能丢失", "error");
+    }
+    renderPinnedPages();
+  });
+}
 function pageTabKey(route) {
   const parts = route.split("?")[0].split("/");
   return parts[0] === "detail" ? `detail/${parts[1]}` : parts[0] || "overview";
@@ -185,9 +256,14 @@ function savePinnedPages() {
   }
 }
 function pinnedPageLabel(route) {
+  if (route.startsWith("bugs?")) return (pinnedPages.find((item) => item.route === route)?.label || "Bug 操作台").replace(/^Bug-/, "");
   const [path, query = ""] = route.split("?");
   const [, id, tab] = path.split("/");
   const project = projectList.find((item) => item.id === Number(id));
+  if (!project) {
+    const savedLabel = pinnedPages.find((item) => item.route === route)?.label;
+    if (savedLabel) return savedLabel;
+  }
   const subproject = new URLSearchParams(query).get("subproject");
   return `${project?.name || "项目"}${subproject ? `-${subproject}` : ""}-${detailTabLabels[tab]}`;
 }
@@ -202,10 +278,11 @@ function createPinButton(route, label) {
   button.innerHTML = `<i class="bi bi-pin-angle${pinned ? "-fill" : ""}" aria-hidden="true"></i>`;
   button.addEventListener("click", () => {
     if (pinned) pinnedPages = pinnedPages.filter((item) => item.route !== route);
-    else pinnedPages.push({ route });
+    else pinnedPages.push({ route, label });
     savePinnedPages();
     renderPinnedPages();
     renderCurrentPinButton();
+    IssueManagement.renderPinButton();
   });
   return button;
 }
@@ -214,26 +291,189 @@ function renderCurrentPinButton() {
   if (!target || !currentPinTarget) return;
   target.replaceChildren(createPinButton(currentPinTarget.route, currentPinTarget.label));
 }
+function createPinnedPageItem({ route }, onActivate, label = pinnedPageLabel(route)) {
+  const isBug = route.startsWith("bugs?");
+  const item = document.createElement("div");
+  item.className = "pinned-page";
+  const unavailableReason = pinnedPageUnavailableReason(route);
+  item.classList.toggle("unavailable", Boolean(unavailableReason));
+  const entry = document.createElement("button");
+  entry.type = "button";
+  entry.className = "nav-link";
+  entry.title = isBug ? `Bug：${label}` : label;
+  if (unavailableReason) entry.title += `（${unavailableReason}）`;
+  entry.setAttribute("aria-label", entry.title);
+  const activeRoute = /^#\/?bugs(?:\?|$)/.test(location.hash) ? IssueManagement.getBugPinTarget()?.route : location.hash.replace(/^#\/?/, "");
+  entry.classList.toggle("active", activeRoute === route);
+  if (activeRoute === route) entry.setAttribute("aria-current", "page");
+  entry.innerHTML = `<span class="nav-icon"><i class="bi ${isBug ? "bi-bug" : "bi-box-seam"}" aria-hidden="true"></i></span><span class="nav-label"></span>`;
+  entry.querySelector(".nav-label").textContent = label;
+  entry.addEventListener("click", () => {
+    if (onActivate) return onActivate(entry);
+    lastPinnedPages[isBug ? "bugs" : "projects"] = route;
+    try {
+      localStorage.setItem(lastPinnedPagesStorageKey, JSON.stringify(lastPinnedPages));
+    } catch {}
+    closePinnedGroup();
+    renderPinnedPages();
+    navigate(route);
+  });
+  item.appendChild(entry);
+  if (!onActivate) item.appendChild(createPinButton(route, label));
+  return item;
+}
+function pinnedPageUnavailableReason(route) {
+  if (route.startsWith("bugs?")) {
+    return pinnedBugAvailability.get(route)?.available === false ? "Bug 已不存在或不再符合保存的筛选条件" : "";
+  }
+  return pinnedProjectsLoaded && !projectList.some((project) => project.id === Number(route.split("/")[1])) ? "项目已不存在" : "";
+}
+async function refreshPinnedBugAvailability() {
+  if (pinnedBugValidationRunning) return;
+  const now = Date.now();
+  const pages = pinnedPages.filter((item) => item.route.startsWith("bugs?") && now - (pinnedBugAvailability.get(item.route)?.checkedAt || 0) >= 10000);
+  if (!pages.length) return;
+  pinnedBugValidationRunning = true;
+  try {
+    const results = await Promise.allSettled(pages.map(async ({ route }) => {
+      pinnedBugAvailability.set(route, { ...pinnedBugAvailability.get(route), checkedAt: now });
+      const parameters = new URLSearchParams(route.slice(5));
+      parameters.set("kind", "bugs");
+      // active_bug locates its page within the saved filters without narrowing them.
+      const result = await api(`/api/issues/data?${parameters}`);
+      if (result.sync?.ready && !result.sync.stale && Array.isArray(result.items)) {
+        return { route, available: result.items.some((item) => item.id === parameters.get("active_bug")) };
+      }
+      return null;
+    }));
+    let changed = false;
+    for (const result of results) {
+      if (result.status !== "fulfilled" || !result.value) continue;
+      const { route, available } = result.value;
+      if (!pinnedPages.some((item) => item.route === route)) continue;
+      const previous = pinnedBugAvailability.get(route);
+      if (previous?.available !== available) changed = true;
+      pinnedBugAvailability.set(route, { ...previous, available });
+    }
+    if (changed) renderPinnedPages();
+  } finally {
+    pinnedBugValidationRunning = false;
+  }
+}
+function closePinnedGroup() {
+  const wasOpen = openedPinnedGroup !== null;
+  openedPinnedGroup = null;
+  pinnedGroupSnapshot = null;
+  if (pinnedGroupPopover?.matches(":popover-open")) pinnedGroupPopover.hidePopover();
+  document.querySelectorAll("[data-pinned-group]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+  if (wasOpen) renderPinnedPages();
+}
+function showPinnedGroup(key, anchor) {
+  if (openedPinnedGroup === key && pinnedGroupPopover?.matches(":popover-open")) return closePinnedGroup();
+  if (!pinnedGroupPopover) {
+    pinnedGroupPopover = document.createElement("nav");
+    pinnedGroupPopover.id = "pinnedGroupPopover";
+    pinnedGroupPopover.className = "pinned-group-popover";
+    pinnedGroupPopover.setAttribute("popover", "auto");
+    document.body.appendChild(pinnedGroupPopover);
+    pinnedGroupPopover.addEventListener("toggle", () => {
+      if (!pinnedGroupPopover.matches(":popover-open")) closePinnedGroup();
+    });
+    window.addEventListener("resize", closePinnedGroup);
+    $("#sidebar").addEventListener("scroll", closePinnedGroup);
+  }
+  if (!pinnedGroupSnapshot) {
+    pinnedGroupSnapshot = new Map();
+    for (const page of pinnedPages) {
+      const group = page.route.startsWith("bugs?") ? "bugs" : "projects";
+      if (!pinnedGroupSnapshot.has(group) || page.route === lastPinnedPages[group]) {
+        pinnedGroupSnapshot.set(group, { ...page, label: pinnedPageLabel(page.route) });
+      }
+    }
+  }
+  openedPinnedGroup = key;
+  updatePinnedGroupPopover(anchor);
+  pinnedGroupPopover.showPopover();
+  positionPinnedGroupPopover(anchor);
+  pinnedGroupPopover.querySelector(".nav-link")?.focus();
+}
+function positionPinnedGroupPopover(anchor) {
+  const rect = anchor.getBoundingClientRect();
+  const sidebarRight = $("#sidebar").getBoundingClientRect().right;
+  const left = Math.max(8, Math.min(sidebarRight + 6, window.innerWidth - pinnedGroupPopover.offsetWidth - 8));
+  const top = Math.max(8, Math.min(rect.top, window.innerHeight - pinnedGroupPopover.offsetHeight - 8));
+  pinnedGroupPopover.style.left = `${left}px`;
+  pinnedGroupPopover.style.top = `${top}px`;
+}
+function updatePinnedGroupPopover(anchor) {
+  const scrollTop = pinnedGroupPopover.querySelector(".pinned-group-list")?.scrollTop || 0;
+  const pages = pinnedPages.filter((item) => (item.route.startsWith("bugs?") ? "bugs" : "projects") === openedPinnedGroup);
+  const label = openedPinnedGroup === "bugs" ? "Bug" : "项目详情";
+  pinnedGroupPopover.setAttribute("aria-label", `钉住的${label}`);
+  const heading = document.createElement("div");
+  heading.className = "pinned-group-heading";
+  heading.textContent = `${label} · ${pages.length}`;
+  const list = document.createElement("div");
+  list.className = "pinned-group-list";
+  pages.forEach((page) => list.appendChild(createPinnedPageItem(page)));
+  if (!pages.length) {
+    const empty = document.createElement("div");
+    empty.className = "pinned-group-heading";
+    empty.textContent = "暂无钉住记录";
+    list.appendChild(empty);
+  }
+  pinnedGroupPopover.replaceChildren(heading, list);
+  list.scrollTop = scrollTop;
+  document.querySelectorAll("[data-pinned-group]").forEach((button) => button.setAttribute("aria-expanded", String(button === anchor)));
+  if (pinnedGroupPopover.matches(":popover-open")) positionPinnedGroupPopover(anchor);
+}
 function renderPinnedPages() {
   const container = $("#pinnedPages");
   if (!container) return;
+  refreshPinnedBugAvailability();
   container.replaceChildren();
-  container.hidden = pinnedPages.length === 0;
-  for (const { route } of pinnedPages) {
-    const label = pinnedPageLabel(route);
-    const item = document.createElement("div");
-    item.className = "pinned-page";
-    const entry = document.createElement("button");
-    entry.type = "button";
-    entry.className = "nav-link";
-    entry.title = label;
-    entry.classList.toggle("active", location.hash === `#/${route}`);
-    if (location.hash === `#/${route}`) entry.setAttribute("aria-current", "page");
-    entry.innerHTML = '<span class="nav-icon"><i class="bi bi-bookmark" aria-hidden="true"></i></span><span class="nav-label"></span>';
-    entry.querySelector(".nav-label").textContent = label;
-    entry.addEventListener("click", () => navigate(route));
-    item.append(entry, createPinButton(route, label));
+  container.hidden = pinnedPages.length === 0 && !openedPinnedGroup;
+  if ((!pinnedGroupEnabled || pinnedPages.length <= pinnedGroupThreshold) && !openedPinnedGroup) {
+    closePinnedGroup();
+    pinnedPages.forEach((page) => container.appendChild(createPinnedPageItem(page)));
+    return;
+  }
+  const groups = new Map();
+  if (openedPinnedGroup && pinnedGroupSnapshot) {
+    for (const key of pinnedGroupSnapshot.keys()) groups.set(key, []);
+  }
+  for (const page of pinnedPages) {
+    const key = page.route.startsWith("bugs?") ? "bugs" : "projects";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(page);
+  }
+  for (const [key, pages] of groups) {
+    const representative = pages.find((page) => page.route === lastPinnedPages[key]) || pages[0] || pinnedGroupSnapshot.get(key);
+    const item = createPinnedPageItem(representative, (anchor) => showPinnedGroup(key, anchor), pages.length ? undefined : representative.label);
+    const entry = item.querySelector(".nav-link");
+    entry.dataset.pinnedGroup = key;
+    entry.setAttribute("aria-haspopup", "true");
+    entry.removeAttribute("aria-current");
+    entry.setAttribute("aria-controls", "pinnedGroupPopover");
+    entry.setAttribute("aria-expanded", String(openedPinnedGroup === key));
+    const label = key === "bugs" ? "Bug" : "项目详情";
+    entry.title = `${label}：${entry.querySelector(".nav-label").textContent}（共 ${pages.length} 条）`;
+    const unavailableReason = pinnedPageUnavailableReason(representative.route);
+    if (unavailableReason) entry.title += `（${unavailableReason}）`;
+    entry.setAttribute("aria-label", entry.title);
+    const badge = document.createElement("span");
+    badge.className = "pinned-group-count";
+    badge.textContent = pages.length;
+    badge.setAttribute("aria-hidden", "true");
+    entry.appendChild(badge);
+    const activeRoute = /^#\/?bugs(?:\?|$)/.test(location.hash) ? IssueManagement.getBugPinTarget()?.route : location.hash.replace(/^#\/?/, "");
+    entry.classList.toggle("active", pages.some((page) => page.route === activeRoute));
     container.appendChild(item);
+  }
+  if (openedPinnedGroup) {
+    const anchor = container.querySelector(`[data-pinned-group="${openedPinnedGroup}"]`);
+    if (anchor) updatePinnedGroupPopover(anchor);
+    else closePinnedGroup();
   }
 }
 function initializeSidebar() {
@@ -318,14 +558,10 @@ async function refresh() {
   try {
     const d = await api("/api/overview");
     projectList = d.projects;
+    pinnedProjectsLoaded = true;
     const projectIds = new Set(projectList.map((project) => project.id));
     for (const key of openedPageTabs.keys()) {
       if (key.startsWith("detail/") && key !== "detail/new" && !projectIds.has(Number(key.split("/")[1]))) openedPageTabs.delete(key);
-    }
-    const remainingPins = pinnedPages.filter((item) => projectIds.has(Number(item.route.split("/")[1])));
-    if (remainingPins.length !== pinnedPages.length) {
-      pinnedPages = remainingPins;
-      savePinnedPages();
     }
     renderPageTabs();
     renderPinnedPages();
@@ -1293,6 +1529,7 @@ async function rollback(pid, did) {
     details(pid);
   }
 }
+initializePinnedSettings();
 renderPinnedPages();
 initializeSidebar();
 if (/^#\/?(?:issues|requirements|bugs)(?:[/?]|$)/.test(location.hash)) {
