@@ -110,22 +110,47 @@ const pageTabLabels = new Map([
   ["settings", "设置"],
 ]);
 const openedPageTabs = new Map();
+const detailTabLabels = { info: "项目信息", config: "项目配置", logs: "日志", terminal: "终端" };
+const pinnedPagesStorageKey = "release-lite-pinned-pages";
+let pinnedPages = [];
+let currentPinTarget = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(pinnedPagesStorageKey) || "[]");
+  if (Array.isArray(saved)) {
+    pinnedPages = saved.filter((item) => item && typeof item.route === "string" && /^detail\/\d+\/(info|config|logs|terminal)(\?subproject=[^&]*)?$/.test(item.route));
+    pinnedPages = [...new Map(pinnedPages.map((item) => [item.route, { route: item.route }])).values()];
+  }
+} catch {}
+function pageTabKey(route) {
+  const parts = route.split("?")[0].split("/");
+  return parts[0] === "detail" ? `detail/${parts[1]}` : parts[0] || "overview";
+}
+function projectPageLabel(route) {
+  const id = Number(route.split("/")[1]);
+  return `项目-${projectList.find((project) => project.id === id)?.name || "新建项目"}`;
+}
 function updatePageTabs(page, route) {
+  const target = route || page;
+  const key = pageTabKey(target);
+  if (pageTabLabels.has(page) || page === "detail") openedPageTabs.set(key, target);
+  renderPageTabs(key);
+  renderPinnedPages();
+}
+function renderPageTabs(activeKey = pageTabKey(location.hash.replace(/^#\/?/, ""))) {
   const container = $("#pageTabs");
   if (!container) return;
-  if (pageTabLabels.has(page)) openedPageTabs.set(page, route || page);
   container.replaceChildren();
   for (const [key, target] of openedPageTabs) {
-    const label = pageTabLabels.get(key);
+    const label = key.startsWith("detail/") ? (key === "detail/new" ? "新建项目" : projectPageLabel(target)) : pageTabLabels.get(key);
     const item = document.createElement("div");
     item.className = "page-tab";
-    item.classList.toggle("active", key === page);
+    item.classList.toggle("active", key === activeKey);
     const entry = document.createElement("button");
     entry.type = "button";
     entry.className = "page-tab-entry";
     entry.textContent = label;
     entry.title = label;
-    if (key === page) entry.setAttribute("aria-current", "page");
+    if (key === activeKey) entry.setAttribute("aria-current", "page");
     entry.addEventListener("click", () => navigate(target));
     const close = document.createElement("button");
     close.type = "button";
@@ -150,6 +175,65 @@ function updatePageTabs(page, route) {
     else if (active.offsetLeft + active.offsetWidth > container.scrollLeft + container.clientWidth) {
       container.scrollLeft = active.offsetLeft + active.offsetWidth - container.clientWidth;
     }
+  }
+}
+function savePinnedPages() {
+  try {
+    localStorage.setItem(pinnedPagesStorageKey, JSON.stringify(pinnedPages));
+  } catch {
+    toast("钉住设置无法保存，刷新后可能丢失", "error");
+  }
+}
+function pinnedPageLabel(route) {
+  const [path, query = ""] = route.split("?");
+  const [, id, tab] = path.split("/");
+  const project = projectList.find((item) => item.id === Number(id));
+  const subproject = new URLSearchParams(query).get("subproject");
+  return `${project?.name || "项目"}${subproject ? `-${subproject}` : ""}-${detailTabLabels[tab]}`;
+}
+function createPinButton(route, label) {
+  const pinned = pinnedPages.some((item) => item.route === route);
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `pin-button${pinned ? " pinned" : ""}`;
+  button.title = `${pinned ? "取消钉住" : "钉住"}${label}`;
+  button.setAttribute("aria-label", button.title);
+  button.setAttribute("aria-pressed", String(pinned));
+  button.innerHTML = `<i class="bi bi-pin-angle${pinned ? "-fill" : ""}" aria-hidden="true"></i>`;
+  button.addEventListener("click", () => {
+    if (pinned) pinnedPages = pinnedPages.filter((item) => item.route !== route);
+    else pinnedPages.push({ route });
+    savePinnedPages();
+    renderPinnedPages();
+    renderCurrentPinButton();
+  });
+  return button;
+}
+function renderCurrentPinButton() {
+  const target = $("#detailPinButton");
+  if (!target || !currentPinTarget) return;
+  target.replaceChildren(createPinButton(currentPinTarget.route, currentPinTarget.label));
+}
+function renderPinnedPages() {
+  const container = $("#pinnedPages");
+  if (!container) return;
+  container.replaceChildren();
+  container.hidden = pinnedPages.length === 0;
+  for (const { route } of pinnedPages) {
+    const label = pinnedPageLabel(route);
+    const item = document.createElement("div");
+    item.className = "pinned-page";
+    const entry = document.createElement("button");
+    entry.type = "button";
+    entry.className = "nav-link";
+    entry.title = label;
+    entry.classList.toggle("active", location.hash === `#/${route}`);
+    if (location.hash === `#/${route}`) entry.setAttribute("aria-current", "page");
+    entry.innerHTML = '<span class="nav-icon"><i class="bi bi-bookmark" aria-hidden="true"></i></span><span class="nav-label"></span>';
+    entry.querySelector(".nav-label").textContent = label;
+    entry.addEventListener("click", () => navigate(route));
+    item.append(entry, createPinButton(route, label));
+    container.appendChild(item);
   }
 }
 function initializeSidebar() {
@@ -234,6 +318,17 @@ async function refresh() {
   try {
     const d = await api("/api/overview");
     projectList = d.projects;
+    const projectIds = new Set(projectList.map((project) => project.id));
+    for (const key of openedPageTabs.keys()) {
+      if (key.startsWith("detail/") && key !== "detail/new" && !projectIds.has(Number(key.split("/")[1]))) openedPageTabs.delete(key);
+    }
+    const remainingPins = pinnedPages.filter((item) => projectIds.has(Number(item.route.split("/")[1])));
+    if (remainingPins.length !== pinnedPages.length) {
+      pinnedPages = remainingPins;
+      savePinnedPages();
+    }
+    renderPageTabs();
+    renderPinnedPages();
     const s = d.system;
     serverInfo = s;
     $("#sidebarIp").textContent = s.local_ip || "未获取";
@@ -949,10 +1044,14 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
     : "";
   const topRefresh = !isNew ? `<button class="btn btn-outline-secondary btn-sm" onclick="refreshProjectDetail(${p.id})">刷新</button>` : "";
   const topDeploy = !isNew && p.is_git ? `<button class="btn btn-primary btn-sm" onclick="act(${p.id},'deploy')">更新代码</button>` : "";
+  const subproject = currentDetailSubproject(p.id);
+  currentPinTarget = !isNew
+    ? { route: `detail/${p.id}/${tab}${subproject ? `?subproject=${encodeURIComponent(subproject)}` : ""}`, label: `${p.name}-${detailTabLabels[tab]}` }
+    : null;
   $("#details").innerHTML =
     `<div class="detail-topline">` +
     `<div>` +
-    `<b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions">${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div>` +
+    `<b>${esc(p.name || "新建项目")}</b>${!isNew ? status(p) : ""}</div>${!isNew ? `<div class="detail-topline-actions"><span id="detailPinButton"></span>${topStartStop}${topRefresh}${topDeploy}</div>` : ""}</div>` +
     `<nav class="detail-tabs">` +
     `<button class="detail-tab ${tab === "info" ? "active" : ""}" onclick="showDetailTab('info')">项目信息` +
     `</button>` +
@@ -967,6 +1066,7 @@ function renderDetail(p, tab, runtime, deps, logSummary, isNew) {
     `<section class="detail-panel ${tab === "info" ? "active" : ""}" data-tab="info">${info}</section>` +
     `<section class="detail-panel ${tab === "config" ? "active" : ""}" data-tab="config">${ProjectForms.render(p, isNew)}</section>` +
     `<section class="detail-panel ${tab === "logs" ? "active" : ""}" data-tab="logs">${logs}</section>${!isNew && (x.running || updating) ? `<section class="detail-panel ${tab === "terminal" ? "active" : ""}" data-tab="terminal">${terminal}</section>` : ""}`;
+  renderCurrentPinButton();
   setupProjectOptions();
   if (!isNew && (x.running || updating) && tab === "terminal") setTimeout(() => setupProjectTerminal(p.id, updating ? "dependencies" : "project"), 0);
 }
@@ -1080,7 +1180,7 @@ function showDetailTab(tab) {
 }
 async function refreshProjectDetail(id) {
   await refresh();
-  await details(id, "info", true);
+  await details(id, currentDetailTab(id), true);
   toast("项目信息已刷新");
 }
 async function loadScripts() {
@@ -1193,6 +1293,7 @@ async function rollback(pid, did) {
     details(pid);
   }
 }
+renderPinnedPages();
 initializeSidebar();
 if (/^#\/?(?:issues|requirements|bugs)(?:[/?]|$)/.test(location.hash)) {
   applyRoute();

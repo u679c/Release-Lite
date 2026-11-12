@@ -184,6 +184,63 @@ body {
   flex-shrink: 0;
   white-space: nowrap;
 }
+.pinned-pages {
+  margin-top: auto;
+  padding-top: 24px;
+  flex-shrink: 0;
+}
+.pinned-pages[hidden] {
+  display: none;
+}
+.pinned-pages:not([hidden]) + .sidebar-footer {
+  margin-top: 0;
+}
+.pinned-page {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pinned-page > .nav-link {
+  flex: 1;
+}
+.pin-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 31px;
+  height: 31px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.pin-button:hover,
+.pin-button.pinned {
+  color: var(--blue);
+}
+.pin-button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.pinned-page .pin-button {
+  color: #aebacf;
+  border: 0;
+}
+.pinned-page .pin-button:hover {
+  color: #fff;
+  background: #1c2a3f;
+}
+.sidebar-collapsed .pinned-page {
+  flex-direction: column;
+  gap: 0;
+}
+.sidebar-collapsed .pinned-page > .pin-button {
+  width: 24px;
+  height: 24px;
+}
 .settings-card {
   padding: 24px;
 }
