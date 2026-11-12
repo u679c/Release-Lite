@@ -15,7 +15,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
 from .conditions import is_high_priority, matches_conditions, normalize_conditions
@@ -334,9 +334,11 @@ class IssueService:
         for scope in (kind, "overview"):
             self.sync_attempts.pop(scope, None)
 
-    def _run(self, arguments, cwd, domain="base"):
+    def _run(self, arguments, cwd, domain="base", identity="user"):
         operation = (
-            "建群"
+            "处理群链接"
+            if domain == "api" or arguments[:2] == ["chats", "link"]
+            else "建群"
             if arguments[0] == "+chat-create"
             else "邀请群成员"
             if arguments[0] == "chat.members"
@@ -354,7 +356,7 @@ class IssueService:
         }
         try:
             result = subprocess.run(
-                [executable, domain, *arguments, "--as", "user"],
+                [executable, domain, *arguments, "--as", identity],
                 cwd=cwd,
                 capture_output=True,
                 text=True,
@@ -376,6 +378,12 @@ class IssueService:
         if result.returncode != 0 or payload.get("ok") is False:
             error = payload.get("error") or {}
             if error.get("type") == "authorization" or error.get("missing_scopes"):
+                if arguments[:2] == ["chats", "link"]:
+                    raise SyncError("无法获取入群链接，请检查飞书登录状态与群分享权限")
+                if domain == "api":
+                    raise SyncError(
+                        "群操作权限不足，请检查飞书登录状态与对应接口权限"
+                    )
                 if domain == "im":
                     if arguments[0] == "chat.members":
                         raise SyncError(
@@ -814,31 +822,105 @@ class IssueService:
             + urlencode({"openChatId": chat_id}),
         }
 
-    def _discussion_state_path(self, record_id, kind="bugs"):
-        digest = hashlib.sha256(record_id.encode()).hexdigest()
-        prefix = "requirement-chat" if kind == "requirements" else "chat"
-        return self.cache_dir / "discussions" / f"{prefix}-{digest}.json"
-
-    @staticmethod
-    def _read_discussion_state(path):
-        try:
-            state = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(state, dict):
-                raise ValueError("Invalid discussion state")
-            return state
-        except FileNotFoundError:
-            return {}
-        except (OSError, ValueError) as exc:
-            raise SyncError("无法确认上次建群结果，请先在飞书检查，避免重复建群") from exc
-
-    @staticmethod
-    def _write_discussion_state(path, state):
-        write_json(path, state)
-
     def _cache_discussion(self, kind, record_id, chat):
         return self._cache_record_fields(
             kind, {record_id}, {"discussion": [{"id": chat["id"], "name": chat["name"]}]},
             "群聊已关联，请重新同步页面数据",
+        )
+
+    def _discussion_share_path(self, chat_id):
+        digest = hashlib.sha256(chat_id.encode()).hexdigest()
+        return self.cache_dir / "discussion-links" / f"{digest}.json"
+
+    @staticmethod
+    def _api_data(result):
+        data = result.get("data", result)
+        return data.get("data", data)
+
+    def _save_discussion_share(self, chat_id, directory, identity="user"):
+        result = self._run(
+            ["chats", "link", "--chat-id", chat_id, "--data",
+             json.dumps({"validity_period": "permanently"})],
+            directory, domain="im", identity=identity,
+        )
+        data = self._api_data(result)
+        url = data.get("share_link") or ""
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise SyncError("飞书未返回有效的入群链接")
+        write_json(self._discussion_share_path(chat_id), data)
+        return url
+
+    def access_discussion(self, kind, record_id):
+        if kind not in {"bugs", "requirements"}:
+            raise ValueError("记录类型无效")
+        with tempfile.TemporaryDirectory(prefix="release-lite-chat-access-") as directory:
+            # Resolve the chat from the source record, never accept an arbitrary chat ID.
+            rows = self._read_table(kind, directory, None, record_ids=[record_id])
+            if len(rows) != 1 or rows[0]["id"] != record_id:
+                raise ValueError("记录不存在或无权访问")
+            chat = self._discussion_chat(rows[0])
+            if not chat:
+                raise ValueError("该记录尚未关联群聊")
+            path = f"/open-apis/im/v1/chats/{quote(chat['id'], safe='')}/members/is_in_chat"
+            result = self._run(["GET", path], directory, domain="api")
+            member = self._api_data(result).get("is_in_chat")
+            if member is True:
+                # Best effort: keep a link available for a later visit after leaving the group.
+                try:
+                    self._save_discussion_share(chat["id"], directory)
+                except (SyncError, OSError):
+                    pass
+                return {"url": chat["url"], "is_in_chat": True}
+            if member is not False:
+                raise SyncError("无法确认是否已加入群聊，请稍后重试")
+            try:
+                saved = json.loads(self._discussion_share_path(chat["id"]).read_text(encoding="utf-8"))
+                url = saved.get("share_link") or ""
+                valid = saved.get("is_permanent") is True or float(saved.get("expire_time") or 0) > time.time()
+                if valid and urlparse(url).scheme == "https" and urlparse(url).netloc:
+                    return {"url": url, "is_in_chat": False}
+            except (OSError, ValueError, AttributeError, TypeError):
+                pass
+            # A bot can supply an invitation only when it is itself in the group.
+            try:
+                result = self._run(["GET", path], directory, domain="api", identity="bot")
+                if self._api_data(result).get("is_in_chat") is True:
+                    url = self._save_discussion_share(chat["id"], directory, identity="bot")
+                    return {"url": url, "is_in_chat": False}
+            except (SyncError, OSError):
+                pass
+            raise SyncError("你尚未加入该群，暂时无法获取入群链接，请联系群成员邀请；群成员通过本页面打开群聊后，可保存入群链接")
+
+    def _ensure_discussion_link(self, kind, row, chat, directory):
+        # Match recordTitle(): a Markdown title link takes precedence over the record URL.
+        markdown = re.fullmatch(r"\[([\s\S]*)\]\((https?://[^\s]+)\)", text(row.get("title")).strip())
+        url = markdown[2] if markdown else SOURCE_URL + "?" + urlencode(
+            {"table": TABLES[kind]["id"], "view": TABLES[kind]["view"], "record": row["id"]}
+        )
+        path = f"/open-apis/im/v1/chats/{quote(chat['id'], safe='')}/chat_tabs"
+        result = self._run(["GET", path + "/list_tabs"], directory, domain="api")
+        data = result.get("data", result)
+        # Raw API responses may retain the upstream response body inside the CLI envelope.
+        data = data.get("data", data)
+        tabs = data.get("chat_tabs")
+        if not isinstance(tabs, list):
+            raise SyncError("无法确认群链接，请在飞书确认并关联记录后同步")
+        if any(
+            url in ((tab.get("tab_content") or {}).get("url"),
+                    (tab.get("tab_content") or {}).get("doc"))
+            for tab in tabs
+        ):
+            return
+        self._run(
+            ["POST", path, "--data", json.dumps({"chat_tabs": [{
+                "tab_name": "需求文档" if kind == "requirements" and markdown else "需求记录" if kind == "requirements" else "Bug 记录",
+                "tab_type": "url",
+                "tab_content": {"url": url},
+                "tab_config": {"is_built_in": False},
+            }]}, ensure_ascii=False)],
+            directory,
+            domain="api",
         )
 
     def create_bug_discussion(self, record_id):
@@ -875,7 +957,7 @@ class IssueService:
                         pending.append(child["id"])
         return list(records.values())
 
-    def _invite_discussion_members(self, state_path, state, directory):
+    def _invite_discussion_members(self, state, directory):
         while state.get("remaining_members"):
             remaining = state["remaining_members"]
             batch = remaining[:50]
@@ -899,7 +981,7 @@ class IssueService:
                 )
             except SyncError as exc:
                 raise SyncError(
-                    f"群聊已创建，部分成员入群待确认，请点击“重试关联”。{exc}"
+                    f"群聊已创建，部分成员入群待确认，请在飞书确认成员。{exc}"
                 ) from exc
             result = result.get("data", result)
             failed = (
@@ -912,10 +994,9 @@ class IssueService:
                 "remaining_members": [member for member in batch if member in failed]
                 + remaining[50:],
             }
-            self._write_discussion_state(state_path, state)
             if failed:
                 raise SyncError(
-                    "群聊已创建，部分成员未入群，请在飞书处理邀请或审批后点击“重试关联”"
+                    "群聊已创建，部分成员未入群，请在飞书处理邀请或审批"
                 )
 
     def _create_discussion(self, kind, record_id, member_fields):
@@ -926,10 +1007,9 @@ class IssueService:
                 raise IssueBusyError("数据处理中，请稍后重试")
             self.submitting = True
         try:
-            state_path = self._discussion_state_path(record_id, kind)
-            state_path.parent.mkdir(parents=True, exist_ok=True)
-            # Serialize the same record across server workers as well as browser tabs.
-            with state_path.with_suffix(".lock").open("a+") as guard:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            # A process lock prevents concurrent creation without storing recovery state.
+            with (self.cache_dir / "discussion-create.lock").open("a+") as guard:
                 try:
                     fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
@@ -952,78 +1032,60 @@ class IssueService:
                     chat = self._discussion_chat(row)
                     created = False
                     if not chat:
-                        state = self._read_discussion_state(state_path)
-                        chat = state.get("chat")
-                        if state.get("pending") and not chat:
+                        records = (
+                            self._requirement_discussion_records(row, directory)
+                            if kind == "requirements"
+                            else [row]
+                        )
+                        people = [
+                            person
+                            for record in records
+                            for field in member_fields
+                            for person in record.get(field) or []
+                        ]
+                        members = list(dict.fromkeys(person["id"] for person in people))
+                        if any(
+                            not isinstance(member, str)
+                            or not re.fullmatch(r"ou_[A-Za-z0-9]+", member)
+                            for member in members
+                        ):
+                            raise ValueError("群成员信息无效，请同步后重试")
+                        title = (
+                            re.sub(
+                                r"^\[([\s\S]*)\]\(https?://[^\s]+\)$",
+                                r"\1",
+                                text(row.get("title")),
+                            ).strip()
+                            or record_id
+                        )
+                        name = title[:60]
+                        arguments = [
+                            "+chat-create",
+                            "--name",
+                            name,
+                            "--description",
+                            f"{'需求' if kind == 'requirements' else 'Bug'}讨论 · {record_id}",
+                            "--type",
+                            "private",
+                        ]
+                        if members:
+                            arguments.extend(["--users", ",".join(members[:50])])
+                        result = self._run(arguments, directory, domain="im")
+                        result = result.get("data", result)
+                        chat_id = result.get("chat_id")
+                        if not isinstance(chat_id, str) or not chat_id.startswith("oc_"):
                             raise SyncError(
-                                "建群结果待确认，请在飞书检查并关联群聊后同步"
+                                "建群结果待确认，请先在飞书检查"
                             )
-                        if not chat:
-                            records = (
-                                self._requirement_discussion_records(row, directory)
-                                if kind == "requirements"
-                                else [row]
-                            )
-                            people = [
-                                person
-                                for record in records
-                                for field in member_fields
-                                for person in record.get(field) or []
-                            ]
-                            members = list(dict.fromkeys(person["id"] for person in people))
-                            if any(
-                                not isinstance(member, str)
-                                or not re.fullmatch(r"ou_[A-Za-z0-9]+", member)
-                                for member in members
-                            ):
-                                raise ValueError("群成员信息无效，请同步后重试")
-                            title = (
-                                re.sub(
-                                    r"^\[([\s\S]*)\]\(https?://[^\s]+\)$",
-                                    r"\1",
-                                    text(row.get("title")),
-                                ).strip()
-                                or record_id
-                            )
-                            name = title[:60]
-                            arguments = [
-                                "+chat-create",
-                                "--name",
-                                name,
-                                "--description",
-                                f"{'需求' if kind == 'requirements' else 'Bug'}讨论 · {record_id}",
-                                "--type",
-                                "private",
-                            ]
-                            if members:
-                                arguments.extend(["--users", ",".join(members[:50])])
-                            # Persist before calling the API; an ambiguous timeout must not create another group.
-                            self._write_discussion_state(
-                                state_path, {"pending": True, "name": name}
-                            )
-                            try:
-                                result = self._run(arguments, directory, domain="im")
-                            except SyncError as exc:
-                                if not exc.uncertain:
-                                    state_path.unlink(missing_ok=True)
-                                raise
-                            result = result.get("data", result)
-                            chat_id = result.get("chat_id")
-                            if not isinstance(chat_id, str) or not chat_id.startswith("oc_"):
-                                raise SyncError(
-                                    "建群结果待确认，请先在飞书检查"
-                                )
-                            chat = self._discussion_chat(
-                                {
-                                    "discussion": [
-                                        {"id": chat_id, "name": result.get("name") or name}
-                                    ]
-                                }
-                            )
-                            state = {"chat": chat, "remaining_members": members[50:]}
-                            self._write_discussion_state(state_path, state)
-                            created = True
-                        self._invite_discussion_members(state_path, state, directory)
+                        chat = self._discussion_chat(
+                            {
+                                "discussion": [
+                                    {"id": chat_id, "name": result.get("name") or name}
+                                ]
+                            }
+                        )
+                        state = {"chat": chat, "remaining_members": members[50:]}
+                        created = True
                         # Recheck the field after group creation before writing it.
                         latest = self._read_table(
                             kind,
@@ -1033,7 +1095,7 @@ class IssueService:
                             artifact_prefix="discussion-check-",
                         )
                         if len(latest) != 1 or latest[0]["id"] != record_id:
-                            raise SyncError(f"群聊已创建，{label}暂时无法访问，请稍后重试关联")
+                            raise SyncError(f"群聊已创建，{label}暂时无法访问，请在飞书确认并关联记录后同步")
                         existing = self._discussion_chat(latest[0])
                         if existing:
                             warning = self._cache_discussion(kind, record_id, existing)
@@ -1084,16 +1146,25 @@ class IssueService:
                                 raise SyncError("群聊关联结果待确认")
                         except SyncError as exc:
                             raise SyncError(
-                                f"群聊已创建，关联结果待确认，请点击“重试关联”，无需重新建群。{exc}"
+                                f"群聊已创建，关联结果待确认，请在飞书确认群聊并关联记录后同步，无需重新建群。{exc}"
                             ) from exc
                     warning = self._cache_discussion(kind, record_id, chat)
+                    if created:
+                        for action in (
+                            lambda: self._invite_discussion_members(state, directory),
+                            lambda: self._ensure_discussion_link(kind, row, chat, directory),
+                        ):
+                            try:
+                                action()
+                            except SyncError as exc:
+                                warning = "；".join(filter(None, [warning, str(exc)]))
                     try:
-                        state_path.unlink(missing_ok=True)
-                    except OSError:
-                        pass  # A leftover recovery entry is ignored while the source field is populated.
+                        self._save_discussion_share(chat["id"], directory)
+                    except (SyncError, OSError):
+                        warning = "；".join(filter(None, [warning, "群聊已关联，但入群链接暂未保存，请检查群分享权限"]))
                     return {"discussion": chat, "created": created, "warning": warning}
         except OSError as exc:
-            raise SyncError("建群进度保存失败，请先在飞书确认群聊并同步后重试") from exc
+            raise SyncError("群聊处理失败，请先在飞书确认群聊并同步后重试") from exc
         finally:
             with self.lock:
                 self.submitting = False
@@ -1569,20 +1640,6 @@ class IssueService:
                 item["can_submit_testing"] = row["status"] in REQUIREMENT_PRE_TEST_STATUSES
             if row["kind"] == "bugs" or not row["is_child"]:
                 item["discussion"] = self._discussion_chat(row)
-                item["discussion_needs_link"] = False
-                item["discussion_creation_pending"] = False
-                if not item["discussion"]:
-                    try:
-                        state = self._read_discussion_state(
-                            self._discussion_state_path(row["id"], row["kind"])
-                        )
-                    except SyncError:
-                        state = {"pending": True}
-                    if state.get("chat"):
-                        item["discussion"] = self._discussion_chat({"discussion": [state["chat"]]})
-                        item["discussion_needs_link"] = True
-                    else:
-                        item["discussion_creation_pending"] = bool(state.get("pending"))
             if row["kind"] == "bugs":
                 item["attachments"] = []
                 for attachment in row.get("attachments") or []:

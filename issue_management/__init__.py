@@ -198,6 +198,13 @@ def create_requirement_discussion(record_id):
     )
 
 
+@blueprint.post("/api/issues/<kind>/<record_id>/discussion/access")
+def access_discussion(kind, record_id):
+    return uncached_json(
+        current_app.extensions["issue_management"].access_discussion(kind, record_id)
+    )
+
+
 @blueprint.get("/api/issues/bugs/<record_id>/attachments/<file_token>")
 def bug_attachment(record_id, file_token):
     try:

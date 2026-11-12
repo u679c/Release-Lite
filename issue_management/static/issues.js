@@ -711,11 +711,11 @@ window.IssueManagement = (() => {
       if (!row) continue;
       const chat = row.discussion;
       const link = chat ?
-        `<a class="issue-discussion-link" href="${escape(chat.url)}" target="_blank" rel="noopener noreferrer" title="${escape(chat.name)}"><i class="bi bi-chat-dots" aria-hidden="true"></i>打开群聊<i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>` :
+        `<a class="issue-discussion-link" href="${escape(chat.url)}" data-access-discussion="${escape(row.id)}" target="_blank" rel="noopener noreferrer" title="${escape(chat.name)}"><i class="bi bi-chat-dots" aria-hidden="true"></i>群聊<i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>` :
         "";
-      const label = creatingDiscussion === row.id ? "创建中…" : row.discussion_creation_pending ? "建群待确认" : row.discussion_needs_link ? "重试关联" : "创建群聊";
-      const action = !chat || row.discussion_needs_link ?
-        `<button class="btn btn-outline-primary btn-sm" type="button" data-create-requirement-discussion="${escape(row.id)}" ${busy || row.discussion_creation_pending ? "disabled" : ""} title="${row.discussion_creation_pending ? "请在飞书确认并关联群聊后同步" : "邀请主需求及子需求的产品、开发、测试、设计人员"}">${label}</button>` :
+      const label = creatingDiscussion === row.id ? "创建中…" : "创建群聊";
+      const action = !chat ?
+        `<button class="btn btn-outline-primary btn-sm" type="button" data-create-requirement-discussion="${escape(row.id)}" ${busy ? "disabled" : ""} title="邀请主需求及子需求的产品、开发、测试、设计人员">${label}</button>` :
         "";
       const html = link + action;
       if (container.innerHTML !== html) container.innerHTML = html;
@@ -835,21 +835,56 @@ window.IssueManagement = (() => {
     }
     const chat = row.discussion;
     const link = chat ?
-      `<a class="issue-discussion-link" href="${escape(chat.url)}" target="_blank" rel="noopener noreferrer" title="在飞书打开：${escape(chat.name)}">` +
+      `<a class="issue-discussion-link" href="${escape(chat.url)}" data-access-discussion="${escape(row.id)}" target="_blank" rel="noopener noreferrer" title="打开或加入：${escape(chat.name)}">` +
       `<i class="bi bi-chat-dots" aria-hidden="true"></i>` +
-      `<span>${escape(chat.name)}</span>` +
+      `<span>群聊</span>` +
       `<i class="bi bi-box-arrow-up-right" aria-hidden="true"></i></a>` :
       "";
-    const label = creatingDiscussion === row.id ? "处理中…" : row.discussion_creation_pending ? "建群待确认" : row.discussion_needs_link ? "重试关联" : "创建群聊";
-    const button = !chat || row.discussion_needs_link ?
-      `<button class="btn btn-outline-primary btn-sm" type="button" data-create-bug-discussion ${busy || row.discussion_creation_pending ? "disabled" : ""} title="${row.discussion_creation_pending ? "请在飞书确认并关联群聊后同步" : "邀请你、创建人和处理人"}">${label}</button>` :
+    const label = creatingDiscussion === row.id ? "处理中…" : "创建群聊";
+    const button = !chat ?
+      `<button class="btn btn-outline-primary btn-sm" type="button" data-create-bug-discussion ${busy ? "disabled" : ""} title="邀请你、创建人和处理人">${label}</button>` :
       "";
     const html = link + button;
     if (container.innerHTML !== html) container.innerHTML = html;
   }
+  async function accessDiscussion(link) {
+    if (link.dataset.loading) return;
+    const targetKind = kind, opening = openSequence;
+    const recordId = link.dataset.accessDiscussion;
+    const status = find(targetKind === "bugs" ? "#issueBugDiscussionStatus" : "#issueActionStatus");
+    // Open during the user gesture so the browser will not block the later navigation.
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    link.dataset.loading = "true";
+    link.setAttribute("aria-busy", "true");
+    showActionStatus(status, "正在检查入群状态…", false, true);
+    try {
+      const result = await request(`/api/issues/${targetKind}/${encodeURIComponent(recordId)}/discussion/access`, {method: "POST"});
+      if (popup && !popup.closed) popup.location.replace(result.url);
+      if (opening !== openSequence || targetKind !== kind) return;
+      if (popup && !popup.closed) {
+        showActionStatus(status, result.is_in_chat ? "正在打开群聊…" : "请在飞书中加入群聊；如需审批，请等待管理员通过", false, true);
+      } else {
+        status.replaceChildren();
+        const action = document.createElement("a");
+        action.href = result.url;
+        action.target = "_blank";
+        action.rel = "noopener noreferrer";
+        action.textContent = "群聊";
+        status.append(action);
+        status.hidden = false;
+      }
+    } catch (error) {
+      if (popup && !popup.closed) popup.close();
+      if (opening === openSequence && targetKind === kind) showActionStatus(status, error.message, true, true);
+    } finally {
+      delete link.dataset.loading;
+      link.removeAttribute("aria-busy");
+    }
+  }
   async function createRequirementDiscussion(id) {
     const row = data?.items.find(item => item.id === id);
-    if (kind !== "requirements" || !row || row.is_child || creatingDiscussion || submittingRequirements.size || submittingBug || searchSavePending || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true" || row.discussion_creation_pending || row.discussion && !row.discussion_needs_link) return;
+    if (kind !== "requirements" || !row || row.is_child || creatingDiscussion || submittingRequirements.size || submittingBug || searchSavePending || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true" || row.discussion) return;
     const opening = openSequence;
     const showStatus = (message, failed = false) =>
       showActionStatus(find("#issueActionStatus"), message, failed, true);
@@ -858,7 +893,7 @@ window.IssueManagement = (() => {
     form.elements.q.disabled = true;
     renderRequirementSelection();
     find("#issueSyncButton").disabled = true;
-    showStatus(row.discussion_needs_link ? "正在关联群聊…" : "正在创建群聊…");
+    showStatus("正在创建群聊…");
     try {
       const result = await request(`/api/issues/requirements/${encodeURIComponent(row.id)}/discussion`, {
         method: "POST"
@@ -866,9 +901,7 @@ window.IssueManagement = (() => {
       if (opening !== openSequence) return;
       const current = data?.items.find(item => item.id === row.id);
       if (current) Object.assign(current, {
-        discussion: result.discussion,
-        discussion_needs_link: false,
-        discussion_creation_pending: false
+        discussion: result.discussion
       });
       showStatus(result.warning || "群聊已就绪", Boolean(result.warning));
       renderRequirementSelection();
@@ -889,7 +922,7 @@ window.IssueManagement = (() => {
   }
   async function createBugDiscussion() {
     const row = data?.items.find(item => item.id === selectedBugId);
-    if (kind !== "bugs" || !row || creatingDiscussion || submittingBug || data.sync.syncing || data.sync.submitting || row.discussion_creation_pending || row.discussion && !row.discussion_needs_link) return;
+    if (kind !== "bugs" || !row || creatingDiscussion || submittingBug || data.sync.syncing || data.sync.submitting || row.discussion) return;
     const opening = openSequence;
     const showStatus = (message, failed = false) => {
       if (selectedBugId !== row.id) return;
@@ -898,7 +931,7 @@ window.IssueManagement = (() => {
     creatingDiscussion = row.id;
     renderBugDesk();
     find("#issueSyncButton").disabled = true;
-    showStatus(row.discussion_needs_link ? "正在关联群聊…" : "正在创建群聊…");
+    showStatus("正在创建群聊…");
     try {
       const result = await request(`/api/issues/bugs/${encodeURIComponent(row.id)}/discussion`, {
         method: "POST"
@@ -906,9 +939,7 @@ window.IssueManagement = (() => {
       if (opening !== openSequence) return;
       const current = data?.items.find(item => item.id === row.id);
       if (current) Object.assign(current, {
-        discussion: result.discussion,
-        discussion_needs_link: false,
-        discussion_creation_pending: false
+        discussion: result.discussion
       });
       showStatus(result.warning || "群聊已就绪", Boolean(result.warning));
       await load();
@@ -1962,6 +1993,12 @@ window.IssueManagement = (() => {
   root.addEventListener(
     "click",
     event => {
+    const discussionLink = event.target.closest("[data-access-discussion]");
+    if (discussionLink) {
+      event.preventDefault();
+      accessDiscussion(discussionLink);
+      return;
+    }
     if (event.target.closest("[data-bug-check], [data-bug-select-all], [data-version-check]")) return;
     const title = event.target.closest("[data-detail]");
     if (title) {
