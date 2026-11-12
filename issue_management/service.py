@@ -203,6 +203,16 @@ def parse_date_range(filters):
     return {"created_from": start.isoformat(), "created_to": end.isoformat()}
 
 
+def parse_dashboard_filters(filters):
+    scope = filters.get("dashboard_scope", "")
+    if scope and scope not in DASHBOARD_SCOPES:
+        raise ValueError("提测筛选范围无效")
+    test_date = calendar_date(filters.get("test_date"))
+    if filters.get("test_date") and test_date is None:
+        raise ValueError("提测日期格式应为 YYYY-MM-DD")
+    return scope, test_date
+
+
 class IssueService:
     def __init__(self, cache_dir):
         self.cache_dir = Path(cache_dir)
@@ -651,6 +661,39 @@ class IssueService:
     def _write_snapshot(self, snapshot):
         write_json(self.cache_dir / "snapshot.json", snapshot)
 
+    def _batch_update_records(self, kind, updates, directory):
+        self._run(
+            [
+                "+record-batch-update",
+                "--base-token",
+                BASE_TOKEN,
+                "--table-id",
+                TABLES[kind]["id"],
+                "--json",
+                json.dumps({"update_records": updates}, ensure_ascii=False),
+            ],
+            directory,
+        )
+
+    def _cache_record_fields(self, kind, record_ids, fields, warning):
+        """Update cached copies together while retaining remote-write success on disk errors."""
+        with self.lock:
+            if self.snapshot is None:
+                return ""
+            keys = ("requirements", "requirement_context") if kind == "requirements" else ("bugs",)
+            snapshot = {**self.snapshot}
+            for key in keys:
+                snapshot[key] = [
+                    {**row, **fields} if row["id"] in record_ids else row
+                    for row in snapshot[key]
+                ]
+            self.snapshot = snapshot
+            try:
+                self._write_snapshot(snapshot)
+            except OSError:
+                return warning
+        return ""
+
     def submit_requirements(self, records):
         return self._update_requirement_statuses(records, "测试中")
 
@@ -717,17 +760,8 @@ class IssueService:
                         }
                     }
                     write_attempted = True
-                    self._run(
-                        [
-                            "+record-batch-update",
-                            "--base-token",
-                            BASE_TOKEN,
-                            "--table-id",
-                            config["id"],
-                            "--json",
-                            json.dumps(payload, ensure_ascii=False),
-                        ],
-                        directory,
+                    self._batch_update_records(
+                        "requirements", payload["update_records"], directory
                     )
                 # The write response does not report per-record results; confirm actual statuses.
                 for attempt in range(3):
@@ -747,20 +781,10 @@ class IssueService:
                         time.sleep(0.5)
                 else:
                     raise SyncError(f"部分需求{action}结果待确认")
-            warning = ""
-            with self.lock:
-                if self.snapshot is not None:
-                    snapshot = {**self.snapshot}
-                    for key in ("requirements", "requirement_context"):
-                        snapshot[key] = [
-                            {**row, "status": status} if row["id"] in expected else row
-                            for row in snapshot[key]
-                        ]
-                    self.snapshot = snapshot
-                    try:
-                        self._write_snapshot(snapshot)
-                    except OSError:
-                        warning = "飞书已更新，请重新同步页面数据"
+            warning = self._cache_record_fields(
+                "requirements", expected, {"status": status},
+                "飞书已更新，请重新同步页面数据",
+            )
             return {"status": status, "updated_count": len(record_ids), "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
@@ -812,26 +836,10 @@ class IssueService:
         write_json(path, state)
 
     def _cache_discussion(self, kind, record_id, chat):
-        warning = ""
-        with self.lock:
-            if self.snapshot is not None:
-                snapshot = {**self.snapshot}
-                keys = (
-                    ("requirements", "requirement_context") if kind == "requirements" else ("bugs",)
-                )
-                for key in keys:
-                    snapshot[key] = [
-                        {**row, "discussion": [{"id": chat["id"], "name": chat["name"]}]}
-                        if row["id"] == record_id
-                        else row
-                        for row in self.snapshot[key]
-                    ]
-                self.snapshot = snapshot
-                try:
-                    self._write_snapshot(snapshot)
-                except OSError:
-                    warning = "群聊已关联，请重新同步页面数据"
-        return warning
+        return self._cache_record_fields(
+            kind, {record_id}, {"discussion": [{"id": chat["id"], "name": chat["name"]}]},
+            "群聊已关联，请重新同步页面数据",
+        )
 
     def create_bug_discussion(self, record_id):
         return self._create_discussion("bugs", record_id, ("creators", "owners"))
@@ -1046,17 +1054,8 @@ class IssueService:
                             }
                         }
                         try:
-                            self._run(
-                                [
-                                    "+record-batch-update",
-                                    "--base-token",
-                                    BASE_TOKEN,
-                                    "--table-id",
-                                    config["id"],
-                                    "--json",
-                                    json.dumps(payload, ensure_ascii=False),
-                                ],
-                                directory,
+                            self._batch_update_records(
+                                kind, payload["update_records"], directory
                             )
                             for attempt in range(3):
                                 verified = self._read_table(
@@ -1163,17 +1162,8 @@ class IssueService:
                         }
                     }
                     write_attempted = True
-                    self._run(
-                        [
-                            "+record-batch-update",
-                            "--base-token",
-                            BASE_TOKEN,
-                            "--table-id",
-                            config["id"],
-                            "--json",
-                            json.dumps(payload, ensure_ascii=False),
-                        ],
-                        directory,
+                    self._batch_update_records(
+                        "bugs", payload["update_records"], directory
                     )
                     for attempt in range(3):
                         verified = self._read_table(
@@ -1194,21 +1184,10 @@ class IssueService:
                             time.sleep(0.5)
                     else:
                         raise SyncError("状态更新结果待确认")
-            warning = ""
-            with self.lock:
-                if self.snapshot is not None:
-                    snapshot = {
-                        **self.snapshot,
-                        "bugs": [
-                            {**row, "status": status} if row["id"] in expected else row
-                            for row in self.snapshot["bugs"]
-                        ],
-                    }
-                    self.snapshot = snapshot
-                    try:
-                        self._write_snapshot(snapshot)
-                    except OSError:
-                        warning = "飞书状态已更新，请重新同步页面数据"
+            warning = self._cache_record_fields(
+                "bugs", expected, {"status": status},
+                "飞书状态已更新，请重新同步页面数据",
+            )
             return {"updated_count": len(expected), "status": status, "warning": warning}
         except (SyncError, OSError) as exc:
             if write_attempted:
@@ -1470,6 +1449,8 @@ class IssueService:
             ]
         selected = [row for row in selected if matches_conditions(row, condition_filter)]
         if dashboard_scope or test_date:
+            dashboard_today = date.fromisoformat(today)
+            submitted_statuses = TEST_DEADLINE_EXEMPT_STATUSES - {"已取消", "无需测试"}
             selected = [
                 row
                 for row in selected
@@ -1477,9 +1458,9 @@ class IssueService:
                     row,
                     dashboard_scope,
                     test_date,
-                    date.fromisoformat(today),
+                    dashboard_today,
                     REQUIREMENT_PRE_TEST_STATUSES,
-                    TEST_DEADLINE_EXEMPT_STATUSES - {"已取消", "无需测试"},
+                    submitted_statuses,
                     TERMINAL["bugs"],
                 )
             ]
@@ -1651,12 +1632,7 @@ class IssueService:
         filters = filters or {}
         date_range = parse_date_range(filters)
         conditions = normalize_conditions(filters.get("condition_filter"))
-        scope = filters.get("dashboard_scope", "")
-        if scope and scope not in DASHBOARD_SCOPES:
-            raise ValueError("提测筛选范围无效")
-        test_date = calendar_date(filters.get("test_date"))
-        if filters.get("test_date") and test_date is None:
-            raise ValueError("提测日期格式应为 YYYY-MM-DD")
+        scope, test_date = parse_dashboard_filters(filters)
         with self.lock:
             snapshot = self.snapshot or {"requirements": [], "bugs": [], "requirement_context": []}
             ready = self._status(date_range, kind="overview")["ready"]
@@ -1722,12 +1698,7 @@ class IssueService:
         date_range = parse_date_range(filters)
         sort_by, sort_order = requirement_sort(filters)
         condition_filter = normalize_conditions(filters.get("condition_filter"), kind=kind)
-        dashboard_scope = filters.get("dashboard_scope", "")
-        if dashboard_scope and dashboard_scope not in DASHBOARD_SCOPES:
-            raise ValueError("提测筛选范围无效")
-        test_date = calendar_date(filters.get("test_date"))
-        if filters.get("test_date") and test_date is None:
-            raise ValueError("提测日期格式应为 YYYY-MM-DD")
+        dashboard_scope, test_date = parse_dashboard_filters(filters)
         bug_stage = filters.get("bug_stage", "all")
         if kind == "bugs" and bug_stage not in BUG_STAGES:
             raise ValueError("Bug 处理阶段无效")

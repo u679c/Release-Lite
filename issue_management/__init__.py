@@ -23,6 +23,19 @@ def init_app(app, data_dir):
     service.scheduled_fixes.start()
 
 
+def json_payload(error):
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError(error)
+    return payload
+
+
+def uncached_json(*args, **kwargs):
+    response = jsonify(*args, **kwargs)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @blueprint.errorhandler(ValueError)
 def invalid_request(exc):
     return jsonify(error=str(exc)), 400
@@ -35,9 +48,7 @@ def issue_busy(exc):
 
 @blueprint.errorhandler(SyncError)
 def sync_failed(exc):
-    response = jsonify(error=str(exc))
-    response.headers["Cache-Control"] = "no-store"
-    return response, 502
+    return uncached_json(error=str(exc)), 502
 
 
 @blueprint.get("/api/issues/home-summary")
@@ -58,13 +69,11 @@ def issue_home_summary():
         for key in ("created_from", "created_to", "date_to_today"):
             if key in request.args:
                 filters[key] = request.args[key]
-    response = jsonify(
+    return uncached_json(
         current_app.extensions["issue_management"].home_summary(
             filters, include_family=requirements["filters"].get("include_family") == "1"
         )
     )
-    response.headers["Cache-Control"] = "no-store"
-    return response
 
 
 @blueprint.get("/api/issues/data")
@@ -101,22 +110,16 @@ def requirement_priority_configuration():
     if request.method == "GET":
         result = service.requirement_priority_configuration()
     else:
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return jsonify(error="优先级配置格式不正确"), 400
+        payload = json_payload("优先级配置格式不正确")
         result = service.configure_requirement_priorities(
             payload.get("levels"), payload.get("revision")
         )
-    response = jsonify(result)
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return uncached_json(result)
 
 
 @blueprint.put("/api/issues/requirements/<record_id>/priority")
 def update_requirement_priority(record_id):
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="需求优先级参数格式不正确"), 400
+    payload = json_payload("需求优先级参数格式不正确")
     return jsonify(
         current_app.extensions["issue_management"].set_requirement_priority(
             record_id, payload.get("priority")
@@ -126,9 +129,7 @@ def update_requirement_priority(record_id):
 
 @blueprint.post("/api/issues/requirements/submit-testing")
 def submit_requirements():
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="提测参数格式不正确"), 400
+    payload = json_payload("提测参数格式不正确")
     return jsonify(
         current_app.extensions["issue_management"].submit_requirements(payload.get("records"))
     )
@@ -136,9 +137,7 @@ def submit_requirements():
 
 @blueprint.post("/api/issues/requirements/status")
 def update_requirement_statuses():
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="状态更新参数格式不正确"), 400
+    payload = json_payload("状态更新参数格式不正确")
     return jsonify(
         current_app.extensions["issue_management"].update_requirement_statuses(
             payload.get("records"), payload.get("status")
@@ -148,9 +147,7 @@ def update_requirement_statuses():
 
 @blueprint.post("/api/issues/bugs/<record_id>/status")
 def update_bug_status(record_id):
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="状态更新参数格式不正确"), 400
+    payload = json_payload("状态更新参数格式不正确")
     return jsonify(
         current_app.extensions["issue_management"].update_bug_status(
             record_id,
@@ -162,9 +159,7 @@ def update_bug_status(record_id):
 
 @blueprint.post("/api/issues/bugs/status")
 def update_bug_statuses():
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify(error="状态更新参数格式不正确"), 400
+    payload = json_payload("状态更新参数格式不正确")
     return jsonify(
         current_app.extensions["issue_management"].update_bug_statuses(
             payload.get("records"),
@@ -180,9 +175,7 @@ def create_bug_discussion(record_id):
 
 @blueprint.get("/api/issues/bugs/scheduled-fixes")
 def scheduled_bug_fixes():
-    response = jsonify(current_app.extensions["issue_management"].scheduled_fixes.state())
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return uncached_json(current_app.extensions["issue_management"].scheduled_fixes.state())
 
 
 @blueprint.route("/api/issues/bugs/<record_id>/scheduled-fix", methods=["PUT", "DELETE"])
@@ -191,15 +184,11 @@ def schedule_bug_fix(record_id):
     if request.method == "DELETE":
         result = scheduler.cancel(record_id)
     else:
-        payload = request.get_json(silent=True)
-        if not isinstance(payload, dict):
-            return jsonify(error="定时修复参数格式不正确"), 400
+        payload = json_payload("定时修复参数格式不正确")
         result = scheduler.schedule(
             record_id, payload.get("minutes"), payload.get("expected_status")
         )
-    response = jsonify(result)
-    response.headers["Cache-Control"] = "no-store"
-    return response
+    return uncached_json(result)
 
 
 @blueprint.post("/api/issues/requirements/<record_id>/discussion")
@@ -222,18 +211,14 @@ def bug_attachment(record_id, file_token):
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
     except FileNotFoundError as exc:
-        response = jsonify(error=str(exc))
-        response.headers["Cache-Control"] = "no-store"
-        return response, 404
+        return uncached_json(error=str(exc)), 404
 
 
 @blueprint.route("/api/issues/preferences/<kind>", methods=["GET", "PUT", "PATCH"])
 def issue_preferences(kind):
     if kind not in ("overview", "requirements", "bugs"):
         return jsonify(error="不支持的页面类型"), 400
-    payload = request.get_json(silent=True) if request.method in ("PUT", "PATCH") else None
-    if request.method in ("PUT", "PATCH") and not isinstance(payload, dict):
-        return jsonify(error="页面配置格式不正确"), 400
+    payload = json_payload("页面配置格式不正确") if request.method in ("PUT", "PATCH") else None
     try:
         return jsonify(
             current_app.extensions["issue_preferences"].access(

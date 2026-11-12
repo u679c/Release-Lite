@@ -153,14 +153,14 @@ def summarize(
     week_status = Counter(state for _, state in weekly)
     buckets = Counter(deadline_bucket(deadline, today) for _, deadline in dated)
 
+    daily_counts = {}
+    for row, state in weekly:
+        day = calendar_date(row.get("test_deadline"))
+        daily_counts.setdefault(day, Counter())["normal" if state == "scheduled" else state] += 1
     calendar = []
     for offset in range(7):
         day = start + timedelta(days=offset)
-        counts = Counter(
-            "normal" if state == "scheduled" else state
-            for row, state in weekly
-            if calendar_date(row.get("test_deadline")) == day
-        )
+        counts = daily_counts.get(day, Counter())
         calendar.append(
             {
                 "date": day.isoformat(),

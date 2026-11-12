@@ -927,18 +927,11 @@ def logs(project_id, kind):
 @app.get("/api/projects/<int:project_id>/logs/summary")
 def log_summary(project_id):
     project_or_404(project_id)
-    runtime, deploy, dependencies = (
-        project_log_path(project_id, "runtime"),
-        project_log_path(project_id, "deploy"),
-        project_log_path(project_id, "dependencies"),
-    )
-    return jsonify(
-        {
-            "runtime_size": runtime.stat().st_size if runtime.exists() else 0,
-            "deploy_size": deploy.stat().st_size if deploy.exists() else 0,
-            "dependencies_size": dependencies.stat().st_size if dependencies.exists() else 0,
-        }
-    )
+    sizes = {}
+    for kind in ("runtime", "deploy", "dependencies"):
+        path = project_log_path(project_id, kind)
+        sizes[f"{kind}_size"] = path.stat().st_size if path.exists() else 0
+    return jsonify(sizes)
 
 
 @app.get("/api/storage/logs")
@@ -1222,12 +1215,9 @@ def managed_tmux_sessions():
         kind = "shell"
         if name.startswith("release-lite-project-"):
             kind = "project"
-            try:
-                project_id = int(name.rsplit("-", 1)[1])
-            except ValueError:
-                continue
         elif name.startswith("release-lite-dependencies-"):
             kind = "dependencies"
+        if kind != "shell":
             try:
                 project_id = int(name.rsplit("-", 1)[1])
             except ValueError:

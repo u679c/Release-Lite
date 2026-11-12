@@ -234,6 +234,12 @@ window.IssueManagement = (() => {
   const priorityBadge = (value, label = value) => value ? `<span class="issue-badge issue-priority-tag" data-priority="${escape(value)}" style="${priorityStyle(value)}">${escape(label)}</span>` : "";
   const statusTag = value => value ? `<span class="issue-status-tag" data-status="${escape(value)}">${escape(value)}</span>` : "";
   const testDeadline = row => row.test_deadline ? `<span class="issue-test-deadline" data-tone="${escape(row.test_deadline_tone || "")}">${date(row.test_deadline)}</span>` : "";
+  function showActionStatus(element, message, failed = false, reveal = false) {
+    element.textContent = message;
+    element.classList.toggle("text-danger", failed);
+    element.classList.toggle("text-success", !failed);
+    if (reveal) element.hidden = false;
+  }
   function recordTitle(row) {
     const raw = String(row.title || "无标题").trim();
     const markdown = raw.match(/^\[([\s\S]*)\]\((https?:\/\/[^\s]+)\)$/);
@@ -332,9 +338,6 @@ window.IssueManagement = (() => {
         `/api/issues/preferences/${target}`,
         {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify(payload)
       }
       );
@@ -848,13 +851,8 @@ window.IssueManagement = (() => {
     const row = data?.items.find(item => item.id === id);
     if (kind !== "requirements" || !row || row.is_child || creatingDiscussion || submittingRequirements.size || submittingBug || searchSavePending || data.sync.syncing || data.sync.submitting || root.getAttribute("aria-busy") === "true" || row.discussion_creation_pending || row.discussion && !row.discussion_needs_link) return;
     const opening = openSequence;
-    const showStatus = (message, failed = false) => {
-      const element = find("#issueActionStatus");
-      element.textContent = message;
-      element.classList.toggle("text-danger", failed);
-      element.classList.toggle("text-success", !failed);
-      element.hidden = false;
-    };
+    const showStatus = (message, failed = false) =>
+      showActionStatus(find("#issueActionStatus"), message, failed, true);
     creatingDiscussion = row.id;
     form.inert = true;
     form.elements.q.disabled = true;
@@ -895,11 +893,7 @@ window.IssueManagement = (() => {
     const opening = openSequence;
     const showStatus = (message, failed = false) => {
       if (selectedBugId !== row.id) return;
-      const element = find("#issueBugDiscussionStatus");
-      element.textContent = message;
-      element.classList.toggle("text-danger", failed);
-      element.classList.toggle("text-success", !failed);
-      element.hidden = false;
+      showActionStatus(find("#issueBugDiscussionStatus"), message, failed, true);
     };
     creatingDiscussion = row.id;
     renderBugDesk();
@@ -1194,12 +1188,8 @@ window.IssueManagement = (() => {
     if (kind !== "bugs" || !row || fixSaving || submittingBug || creatingDiscussion || data.sync.syncing || data.sync.submitting || row.status === status) return;
     const opening = openSequence;
     closeFixPopover();
-    const showStatus = (message, failed = false) => {
-      const element = find("#issueBugActionStatus");
-      element.textContent = message;
-      element.classList.toggle("text-danger", failed);
-      element.classList.toggle("text-success", !failed);
-    };
+    const showStatus = (message, failed = false) =>
+      showActionStatus(find("#issueBugActionStatus"), message, failed);
     submittingBug = {
       id: row.id,
       status
@@ -1212,9 +1202,6 @@ window.IssueManagement = (() => {
         `/api/issues/bugs/${encodeURIComponent(row.id)}/status`,
         {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           status,
           expected_status: row.status
@@ -1245,13 +1232,8 @@ window.IssueManagement = (() => {
     }));
     if (!records.length) return;
     const opening = openSequence;
-    const showStatus = (message, failed = false) => {
-      const element = find("#issueBugBatchStatus");
-      element.textContent = message;
-      element.classList.toggle("text-danger", failed);
-      element.classList.toggle("text-success", !failed);
-      element.hidden = false;
-    };
+    const showStatus = (message, failed = false) =>
+      showActionStatus(find("#issueBugBatchStatus"), message, failed, true);
     submittingBug = {
       ids: records.map(row => row.id),
       status
@@ -1266,9 +1248,6 @@ window.IssueManagement = (() => {
         "/api/issues/bugs/status",
         {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           records,
           status
@@ -1627,20 +1606,13 @@ window.IssueManagement = (() => {
     select.disabled = true;
     const showStatus = (message, failed = false) => {
       if (opening !== openSequence || find("#issueRequirementPriority")?.dataset.recordId !== recordId) return;
-      const status = find("#issueRequirementPriorityStatus");
-      status.textContent = message;
-      status.classList.toggle("text-danger", failed);
-      status.classList.toggle("text-success", !failed);
+      showActionStatus(find("#issueRequirementPriorityStatus"), message, failed);
     };
-    // showStatus("正在保存优先级…");
     try {
       const result = await request(
         `/api/issues/requirements/${encodeURIComponent(recordId)}/priority`,
         {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           priority
         })
@@ -1682,12 +1654,8 @@ window.IssueManagement = (() => {
     if (!records.length) return;
     const opening = openSequence;
     const actionStatus = find("#issueActionStatus");
-    const showStatus = (message, failed = false) => {
-      actionStatus.textContent = message;
-      actionStatus.classList.toggle("text-danger", failed);
-      actionStatus.classList.toggle("text-success", !failed);
-      actionStatus.hidden = false;
-    };
+    const showStatus = (message, failed = false) =>
+      showActionStatus(actionStatus, message, failed, true);
     const submittingTesting = status === "测试中";
     const action = submittingTesting ? "提测" : "状态更新";
     if (submittingTesting && selectedRows.some(row => !canSubmitRequirement(row))) {
@@ -1706,9 +1674,6 @@ window.IssueManagement = (() => {
         submittingTesting ? "/api/issues/requirements/submit-testing" : "/api/issues/requirements/status",
         {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           records,
           status
@@ -1893,9 +1858,6 @@ window.IssueManagement = (() => {
           `/api/issues/preferences/${target}`,
           {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json"
-        },
         body: JSON.stringify({
           auto_sync: enabled
         })

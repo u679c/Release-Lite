@@ -3,15 +3,14 @@
 
 def requirement_groups(records, matched_ids, include_family=False):
     index = {row["id"]: row for row in records}
-    neighbors = {record_id: set() for record_id in index}
-    for row in records:
-        for parent_id in row.get("parent_ids", []):
-            if parent_id in index and parent_id != row["id"]:
-                neighbors[row["id"]].add(parent_id)
-                neighbors[parent_id].add(row["id"])
-
     visible = set(matched_ids)
     if include_family:
+        neighbors = {record_id: set() for record_id in index}
+        for row in records:
+            for parent_id in row.get("parent_ids", []):
+                if parent_id in index and parent_id != row["id"]:
+                    neighbors[row["id"]].add(parent_id)
+                    neighbors[parent_id].add(row["id"])
         pending = list(visible)
         while pending:
             for record_id in neighbors[pending.pop()]:

@@ -1371,11 +1371,11 @@ async function browseDirectories(path = "") {
   const picker = $("#directoryPicker");
   const dialog = $("#directoryDialog");
   if (!dialog.open) dialog.showModal();
+  const addressInput = (value = "") =>
+    `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(value)}" data-path="${esc(value)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()">`;
   try {
     const data = await api("/api/directories" + (path ? "?path=" + encodeURIComponent(path) : ""));
     const rootButtons = data.roots.map((root) => `<button type="button" class="directory-root" onclick="browseDirectories('${esc(root)}')">${esc(root)}</button>`).join("");
-    const addressInput = (value = "") =>
-      `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(value)}" data-path="${esc(value)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()">`;
     if (!data.path) {
       picker.innerHTML = `<div class="directory-picker-title">选择目录</div><div class="directory-roots">${rootButtons}</div>`;
       return;
@@ -1394,7 +1394,7 @@ async function browseDirectories(path = "") {
       `<div class="directory-list">${folders}</div>`;
   } catch (e) {
     picker.innerHTML =
-      `<input id="directoryPathInput" class="directory-path-input" type="text" value="${esc(path)}" data-path="${esc(path)}" placeholder="输入服务器目录" aria-label="服务器目录" onblur="browseDirectoryFromInput()" onkeydown="if (event.key === 'Enter') this.blur()">` +
+      addressInput(path) +
       `<span class="text-danger">${esc(e.message)}</span>`;
     toast(e.message, "error");
   }
